@@ -49,6 +49,15 @@
     --cascade-accent: #b689ff;
     --cascade-soft: rgba(182, 137, 255, 0.12);
 
+    /* The cascade picture: where an agent started, where it travelled, how
+     * bright the head of the walk is. Seed reuses the "selected" amber because
+     * that is what it is - the frame a human policy decision landed on. */
+    --cascade-seed: var(--overlay-selected);
+    --cascade-seed-soft: rgba(255, 180, 69, 0.2);
+    --cascade-reach: rgba(182, 137, 255, 0.55);
+    --cascade-glow: rgba(214, 186, 255, 0.95);
+    --cascade-life: rgba(255, 92, 122, 0.3);
+
     /* Shape + depth. */
     --radius-sm: 6px;
     --radius-md: 10px;
@@ -1338,4 +1347,620 @@ button {
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--text-muted);
+}
+
+/* ------------------------------------------------------- cascade board
+ *
+ * One horizontal axis - the frame chain - reused by the coverage strip, every
+ * agent lane and every track row, so a column of this panel is always the same
+ * frame. Lane geometry is percentages of the plot area; the only fixed width
+ * is the label gutter, which is also what the playhead's calc() measures from.
+ * Keep the board free of horizontal padding or the two stop lining up.
+ */
+
+.casc {
+    --casc-gutter: 136px;
+    --casc-row: 29px;
+}
+
+.casc-head-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.casc-lede {
+    margin: 0;
+    max-width: 84ch;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+.casc-wait {
+    padding: 2.5rem 1rem;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.casc-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.15rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.casc-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.casc-key-seed {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    transform: rotate(45deg);
+    background: var(--cascade-seed);
+    box-shadow: 0 0 0 3px var(--cascade-seed-soft);
+}
+
+.casc-key-fwd,
+.casc-key-back {
+    width: 30px;
+    height: 7px;
+    border-radius: 4px;
+}
+
+.casc-key-fwd {
+    background: linear-gradient(90deg, var(--cascade-accent), var(--cascade-reach));
+}
+
+.casc-key-back {
+    background: linear-gradient(270deg, var(--cascade-accent), var(--cascade-reach));
+}
+
+.casc-key-pip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cascade-accent);
+}
+
+.casc-key-track {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--overlay-redaction);
+}
+
+.casc-key-now {
+    width: 0;
+    height: 14px;
+    border-left: 1.5px dashed var(--timeline-current);
+}
+
+.casc-board {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0.5rem 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    overflow: hidden;
+}
+
+.casc-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: var(--casc-row);
+    animation: casc-fade 340ms ease both;
+}
+
+.casc-row:hover {
+    background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
+}
+
+.casc-row-open {
+    margin-top: 3px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.casc-row-id {
+    flex: 0 0 var(--casc-gutter);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    padding: 0 0.55rem 0 0.75rem;
+    min-width: 0;
+}
+
+.casc-row-name {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.casc-row-meta {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.casc-row-value {
+    color: var(--overlay-redaction);
+}
+
+.casc-arrow {
+    color: var(--cascade-accent);
+    font-size: 11px;
+}
+
+.casc-track {
+    position: relative;
+    flex: 1 1 auto;
+    height: 100%;
+    min-width: 0;
+}
+
+.casc-rail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--border-subtle);
+}
+
+.casc-rail-axis {
+    background: var(--border-strong);
+}
+
+/* -- axis + coverage ---------------------------------------------------- */
+
+.casc-row-axis {
+    height: 24px;
+}
+
+.casc-row-axis:hover {
+    background: none;
+}
+
+.casc-tick {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0 4px;
+    background: var(--surface-sunken);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-muted);
+}
+
+.casc-row-cover {
+    height: 26px;
+}
+
+.casc-cover {
+    position: absolute;
+    top: 50%;
+    height: 18px;
+    margin-top: -9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.casc-cover-bar {
+    width: 60%;
+    min-width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--overlay-redaction);
+    opacity: 0.7;
+    transition: opacity 120ms ease, height 120ms ease;
+}
+
+.casc-cover-seed {
+    background: var(--cascade-seed);
+    opacity: 1;
+}
+
+.casc-cover:hover .casc-cover-bar {
+    opacity: 1;
+    height: 18px;
+}
+
+.casc-cover.casc-on .casc-cover-bar {
+    box-shadow: 0 0 0 2px var(--timeline-current);
+}
+
+/* -- one agent's walk --------------------------------------------------- */
+
+.casc-span {
+    position: absolute;
+    top: 50%;
+    height: 8px;
+    margin-top: -4px;
+    border-radius: 4px;
+    animation: casc-sweep 520ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    animation-delay: inherit;
+}
+
+.casc-fwd .casc-span {
+    transform-origin: left center;
+    background: linear-gradient(90deg, var(--cascade-accent), var(--cascade-reach));
+}
+
+.casc-back .casc-span {
+    transform-origin: right center;
+    background: linear-gradient(270deg, var(--cascade-accent), var(--cascade-reach));
+}
+
+.casc-span::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    margin-top: -5px;
+    border: 5px solid transparent;
+}
+
+.casc-fwd .casc-span::after {
+    right: -7px;
+    border-left-color: var(--cascade-reach);
+}
+
+.casc-back .casc-span::after {
+    left: -7px;
+    border-right-color: var(--cascade-reach);
+}
+
+/* The head of the walk, going round again - the one thing on this panel that
+ * moves on its own, because "the agent travels" is the whole idea. */
+.casc-comet {
+    position: absolute;
+    top: 0;
+    width: 16px;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, transparent, var(--cascade-glow));
+    animation: casc-travel 2.8s linear infinite;
+    animation-delay: inherit;
+}
+
+.casc-back .casc-comet {
+    animation-direction: reverse;
+}
+
+.casc-stub {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 2px;
+    margin: -1px 0 0 -7px;
+    border-radius: 2px;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--border-strong) 0 3px,
+        transparent 3px 6px
+    );
+}
+
+.casc-seed {
+    position: absolute;
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    margin: -5.5px 0 0 -5.5px;
+    border-radius: 2px;
+    transform: rotate(45deg);
+    background: var(--cascade-seed);
+    box-shadow: 0 0 0 3px var(--cascade-seed-soft);
+    z-index: 3;
+    transition: box-shadow 120ms ease;
+}
+
+.casc-seed:hover {
+    box-shadow: 0 0 0 5px var(--cascade-seed-soft);
+}
+
+.casc-seed.casc-on {
+    box-shadow: 0 0 0 3px var(--cascade-seed-soft),
+        0 0 0 5px var(--timeline-current);
+}
+
+.casc-mark {
+    position: absolute;
+    top: 50%;
+    width: 16px;
+    height: 18px;
+    margin: -9px 0 0 -8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    animation: casc-pop 240ms cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+
+.casc-pip {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cascade-accent);
+    box-shadow: 0 0 0 2px var(--surface-sunken);
+    transition: transform 110ms ease;
+}
+
+.casc-pip-2 {
+    width: 8px;
+    height: 8px;
+}
+
+.casc-pip-3 {
+    width: 9.5px;
+    height: 9.5px;
+}
+
+.casc-mark:hover .casc-pip {
+    transform: scale(1.5);
+}
+
+.casc-mark.casc-on .casc-pip {
+    box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--timeline-current);
+}
+
+.casc-why {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 13px;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-overlay);
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 16px;
+    white-space: nowrap;
+    max-width: 34ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: casc-fade 320ms ease both;
+}
+
+.casc-why-flip {
+    margin-left: 0;
+    margin-right: 13px;
+}
+
+/* Why it stopped is not all the same news: a value that went away is the
+ * cascade working, a step limit is coverage the run did not finish. */
+.casc-why-done {
+    border-color: color-mix(in srgb, var(--success) 40%, transparent);
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.casc-why-cut {
+    border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+    background: var(--warning-soft);
+    color: var(--warning);
+}
+
+/* -- tracks ------------------------------------------------------------- */
+
+.casc-split {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem 0.1rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.casc-split-h {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.casc-split-p {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* The reach of a value, dashed because it is an extent and not a claim: the
+ * dots are the frames actually covered, the gaps are frames it was not on. */
+.casc-life {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--cascade-life) 0 4px,
+        transparent 4px 9px
+    );
+}
+
+.casc-pip-track {
+    background: var(--overlay-redaction);
+}
+
+.casc-pip-seeded {
+    background: var(--cascade-seed);
+}
+
+/* -- playhead ----------------------------------------------------------- */
+
+.casc-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1.5px dashed var(--timeline-current);
+    pointer-events: none;
+    z-index: 4;
+    transition: left 240ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.casc-playhead-tag {
+    position: absolute;
+    top: 2px;
+    left: 3px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--timeline-current);
+    color: var(--text-inverse);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 14px;
+}
+
+/* -- provenance --------------------------------------------------------- */
+
+.casc-prov {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 210px;
+    overflow-y: auto;
+}
+
+.casc-prov-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-overlay);
+}
+
+.casc-prov-text {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.casc-prov-agent {
+    font-size: 11px;
+    color: var(--cascade-accent);
+    text-decoration: none;
+    border-bottom: 1px dashed color-mix(in srgb, var(--cascade-accent) 45%, transparent);
+}
+
+.casc-prov-agent:hover {
+    color: var(--text-primary);
+}
+
+.casc-prov-none {
+    color: var(--text-muted);
+    border-bottom: 0;
+}
+
+.casc-prov-track {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.casc-prov-conf {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+@keyframes casc-sweep {
+    from {
+        transform: scaleX(0);
+    }
+    to {
+        transform: scaleX(1);
+    }
+}
+
+@keyframes casc-pop {
+    from {
+        opacity: 0;
+        transform: scale(0.3);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes casc-fade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes casc-travel {
+    0% {
+        left: -16px;
+        opacity: 0;
+    }
+    14% {
+        opacity: 0.9;
+    }
+    86% {
+        opacity: 0.9;
+    }
+    100% {
+        left: 100%;
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .casc-row,
+    .casc-span,
+    .casc-mark,
+    .casc-why {
+        animation: none;
+    }
+
+    .casc-comet {
+        display: none;
+    }
+
+    .casc-playhead {
+        transition: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .casc {
+        --casc-gutter: 104px;
+    }
 }

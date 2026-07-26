@@ -108,12 +108,15 @@ def:pub StudioPage -> JsxElement {
                     video_id={video_id}
                     current_index={pos}
                 />
+                {#* The cascade is a timeline over the whole frame chain, so it
+                    lives under the other timeline rather than in the 360px
+                    rail, where its axis would be too short to read. *#}
+                <CascadePanel video_id={video_id} frame_index={pos}/>
             </main>
 
             <aside className="studio-rail">
                 <FramePanel frame={current} words={words} show_words={show_words}/>
                 <ExportPanel export_url={video.export_url} box_count={video.box_count}/>
-                <CascadePanel video_id={video_id} frame_index={pos}/>
             </aside>
         </div>
     </div>;

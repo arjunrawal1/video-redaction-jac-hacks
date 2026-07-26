@@ -7,9 +7,14 @@ what the client imports.
 
 import from library {
     BoxView, WordView, FrameView, FrameWords, VideoView, VideoDetail,
-    list_videos, get_video, get_frame_words
+    AgentStop, AgentView, TrackStop, TrackView, FrameMark, CascadeView,
+    BoxProvenance,
+    list_videos, get_video, get_frame_words, get_cascade, get_frame_provenance
 }
-import from endpoints { IngestOutcome, request_ingest, seed_from_path }
+import from endpoints {
+    IngestOutcome, CascadeSeed, CascadeWipe,
+    request_ingest, seed_from_path, seed_demo_cascade, clear_demo_cascade
+}
 
 cl {
     import "./assets/theme.css";

@@ -25,6 +25,10 @@ glob MEDIA_ROOT: str = "media";
 # that works both under `jac start` and `jac start --dev`.
 glob MEDIA_URL_PREFIX: str = "/static/media";
 
+# Boxes written by `seed_demo_cascade` carry this in their reason, so a view can
+# say out loud that it is drawing fixtures rather than a real detection pass.
+glob FIXTURE_MARK: str = "(fixture)";
+
 # ---------------------------------------------------------------- view models
 
 """One redaction rectangle, box_2d order on the 0..1000 scale."""
@@ -69,6 +73,96 @@ obj FrameWords {
     has id: str,
         index: int,
         words: list[WordView];
+}
+
+"""One frame an agent inspected, and what it left on it."""
+obj AgentStop {
+    has index: int,
+        timestamp: float,
+        box_count: int,
+        texts: list[str];
+}
+
+"""One cascade agent: where it started, how far it got, and why it stopped.
+
+`seed_index` is the frame the agent was launched from and `reach_index` the
+furthest frame it claimed, so `[seed_index, reach_index]` is the span the UI
+draws. Neither is `focus`: the walker overwrites `focus` with each frame it
+inspects, so on a finished agent it is the last frame reached, not the seed.
+"""
+obj AgentView {
+    has id: str,
+        agent_id: str,
+        direction: str,
+        seed_index: int,
+        reach_index: int,
+        focus: int,
+        steps: int,
+        box_count: int,
+        still_visible: bool,
+        reason: str,
+        summary: str,
+        targets: list[str],
+        stops: list[AgentStop];
+}
+
+"""One frame a track was seen on."""
+obj TrackStop {
+    has index: int,
+        timestamp: float,
+        box_count: int,
+        seeded: bool;
+}
+
+"""One real-world value, followed across every frame it stayed visible on."""
+obj TrackView {
+    has id: str,
+        label: str,
+        box_count: int,
+        seed_boxes: int,
+        cascade_boxes: int,
+        first_index: int,
+        last_index: int,
+        stops: list[TrackStop];
+}
+
+"""A frame as the cascade axis needs it: position and how covered it is."""
+obj FrameMark {
+    has index: int,
+        timestamp: float,
+        box_count: int,
+        seed_count: int;
+}
+
+"""Everything the cascade view draws for one video."""
+obj CascadeView {
+    has video_id: str,
+        frame_count: int,
+        agent_count: int,
+        track_count: int,
+        box_count: int,
+        seed_box_count: int,
+        cascade_box_count: int,
+        fixture_box_count: int,
+        seed_frames: list[int],
+        agents: list[AgentView],
+        tracks: list[TrackView],
+        frames: list[FrameMark];
+}
+
+"""One box on one frame, with the agent that placed it and the track it joins."""
+obj BoxProvenance {
+    has box_id: str,
+        text: str,
+        origin: str,
+        confidence: float,
+        reason: str,
+        agent_id: str,
+        direction: str,
+        agent_reason: str,
+        seed_index: int,
+        track_label: str,
+        track_boxes: int;
 }
 
 obj VideoView {
@@ -269,6 +363,261 @@ def:pub get_video(video_id: str) -> VideoDetail | None {
         video=_video_view(v, frames),
         frames=[_frame_view(f) for f in frames]
     );
+}
+
+# ---------------------------------------------------------------- cascade
+
+"""The frame a box was detected on, or None if it hangs off nothing."""
+def _holder(b: Box) -> Frame | None {
+    holders = [b <-:Detected:<-[?:Frame]];
+    return holders[0] if holders else None;
+}
+
+"""The frame an agent was launched from.
+
+`agent_id` is `<direction>-<seed index>`, which is the only record of where the
+walk began: `focus` moves with the agent. The claimed frames are the fallback
+for an id that does not carry an index -- one step back from the near end of the
+span is where the agent must have come from.
+"""
+def _seed_index(a: Agent, claimed: list[int]) -> int {
+    tail = a.agent_id.rsplit("-", 1);
+    if len(tail) == 2 and tail[1].isdigit() {
+        return int(tail[1]);
+    }
+    if not claimed {
+        return a.focus;
+    }
+    return (min(claimed) - 1) if a.direction == "forward" else (max(claimed) + 1);
+}
+
+def _agent_view(a: Agent, allowed: set[str]) -> AgentView {
+    grouped: dict[int, list[Box]] = {};
+    stamp: dict[int, float] = {};
+    for b in [a <-:AddedBy:<-[?:Box]] {
+        f = _holder(b);
+        if f is None or jid(f) not in allowed {
+            continue;
+        }
+        if f.index not in grouped {
+            grouped[f.index] = [];
+        }
+        grouped[f.index].append(b);
+        stamp[f.index] = f.timestamp;
+    }
+
+    claimed = sorted(grouped.keys());
+    ahead = a.direction == "forward";
+    # Travel order, not numeric order: a backward agent's first step is its
+    # highest frame index.
+    walked = claimed if ahead else list(reversed(claimed));
+
+    stops: list[AgentStop] = [];
+    targets: list[str] = [];
+    total = 0;
+    for i in walked {
+        texts = sorted({b.text for b in grouped[i] if b.text});
+        for t in texts {
+            if t not in targets {
+                targets.append(t);
+            }
+        }
+        total += len(grouped[i]);
+        stops.append(
+            AgentStop(
+                index=i,
+                timestamp=stamp[i],
+                box_count=len(grouped[i]),
+                texts=texts
+            )
+        );
+    }
+
+    seed = _seed_index(a, claimed);
+    reach = seed;
+    if claimed {
+        reach = max(claimed) if ahead else min(claimed);
+    }
+
+    # An agent that never left its seed is finished without `finish()` ever
+    # running, so its stop reason exists only inside the summary sentence.
+    why = a.reason;
+    if not why and "no frame that way" in a.summary {
+        why = "no frame that way";
+    }
+
+    return AgentView(
+        id=jid(a),
+        agent_id=a.agent_id,
+        direction=a.direction,
+        seed_index=seed,
+        reach_index=reach,
+        focus=a.focus,
+        steps=a.steps,
+        box_count=total,
+        still_visible=a.still_visible,
+        reason=why,
+        summary=a.summary,
+        targets=targets,
+        stops=stops
+    );
+}
+
+def _track_view(t: Track, allowed: set[str]) -> TrackView {
+    grouped: dict[int, list[Box]] = {};
+    stamp: dict[int, float] = {};
+    for b in [t <-:MemberOf:<-[?:Box]] {
+        f = _holder(b);
+        if f is None or jid(f) not in allowed {
+            continue;
+        }
+        if f.index not in grouped {
+            grouped[f.index] = [];
+        }
+        grouped[f.index].append(b);
+        stamp[f.index] = f.timestamp;
+    }
+
+    seen = sorted(grouped.keys());
+    stops = [
+        TrackStop(
+            index=i,
+            timestamp=stamp[i],
+            box_count=len(grouped[i]),
+            seeded=len([b for b in grouped[i] if b.origin == "seed"]) > 0
+        )
+        for i in seen
+    ];
+    members = [b for i in seen for b in grouped[i]];
+
+    return TrackView(
+        id=jid(t),
+        label=t.label,
+        box_count=len(members),
+        seed_boxes=len([b for b in members if b.origin == "seed"]),
+        cascade_boxes=len([b for b in members if b.origin == "cascade"]),
+        first_index=seen[0] if seen else 0,
+        last_index=seen[-1] if seen else 0,
+        stops=stops
+    );
+}
+
+def _agent_order(v: AgentView) -> tuple {
+    return (v.seed_index, 0 if v.direction == "forward" else 1, v.agent_id);
+}
+
+def _track_order(t: TrackView) -> tuple {
+    return (-t.box_count, t.label);
+}
+
+"""The cascade over one video: its agents, its tracks, and the frame axis.
+
+Agents hang off `root` rather than off the video, so a video claims an agent by
+owning the frames the agent wrote on. An agent that placed nothing -- the
+backward agent of a seed on frame 1, say -- has no frames to be claimed by, and
+is attributed to the only video when there is only one. With several videos in
+the graph those boxless agents are dropped rather than guessed at; giving Agent
+an edge to its Video is the fix, and that is a `graph.jac` change.
+"""
+def:pub get_cascade(video_id: str) -> CascadeView | None {
+    v = _find_video(video_id);
+    if v is None {
+        return None;
+    }
+    frames = _ordered_frames(v);
+    allowed = {jid(f) for f in frames};
+
+    marks: list[FrameMark] = [];
+    seed_frames: list[int] = [];
+    seeded = 0;
+    cascaded = 0;
+    fixtures = 0;
+    total = 0;
+    for f in frames {
+        boxes = [f ->:Detected:->[?:Box]];
+        heads = len([b for b in boxes if b.origin == "seed"]);
+        total += len(boxes);
+        seeded += heads;
+        cascaded += len([b for b in boxes if b.origin == "cascade"]);
+        fixtures += len([b for b in boxes if FIXTURE_MARK in b.reason]);
+        if heads > 0 {
+            seed_frames.append(f.index);
+        }
+        marks.append(
+            FrameMark(
+                index=f.index,
+                timestamp=f.timestamp,
+                box_count=len(boxes),
+                seed_count=heads
+            )
+        );
+    }
+
+    lone = len([root -->[?:Video]]) == 1;
+    agents: list[AgentView] = [];
+    for a in [root -->[?:Agent]] {
+        view = _agent_view(a, allowed);
+        if view.box_count > 0 or lone {
+            agents.append(view);
+        }
+    }
+
+    tracks = [_track_view(t, allowed) for t in [root -->[?:Track]]];
+    tracks = [t for t in tracks if t.box_count > 0];
+
+    return CascadeView(
+        video_id=jid(v),
+        frame_count=len(frames),
+        agent_count=len(agents),
+        track_count=len(tracks),
+        box_count=total,
+        seed_box_count=seeded,
+        cascade_box_count=cascaded,
+        fixture_box_count=fixtures,
+        seed_frames=seed_frames,
+        agents=sorted(agents, key=_agent_order),
+        tracks=sorted(tracks, key=_track_order),
+        frames=marks
+    );
+}
+
+"""Provenance for every box on one frame: which agent placed it, which track.
+
+Keyed by frame index rather than id so the caller can ask with what the URL
+already gives it.
+"""
+def:pub get_frame_provenance(video_id: str, frame_index: int) -> list[BoxProvenance] {
+    v = _find_video(video_id);
+    if v is None {
+        return [];
+    }
+    hits = [f for f in _ordered_frames(v) if f.index == frame_index];
+    if not hits {
+        return [];
+    }
+
+    out: list[BoxProvenance] = [];
+    for b in [hits[0] ->:Detected:->[?:Box]] {
+        placed = [b ->:AddedBy:->[?:Agent]];
+        joined = [b ->:MemberOf:->[?:Track]];
+        agent_id = placed[0].agent_id if placed else "";
+        out.append(
+            BoxProvenance(
+                box_id=jid(b),
+                text=b.text,
+                origin=b.origin,
+                confidence=b.confidence,
+                reason=b.reason,
+                agent_id=agent_id,
+                direction=placed[0].direction if placed else "",
+                agent_reason=placed[0].reason if placed else "",
+                seed_index=_seed_index(placed[0], []) if placed else 0,
+                track_label=joined[0].label if joined else "",
+                track_boxes=len([joined[0] <-:MemberOf:<-[?:Box]]) if joined else 0
+            )
+        );
+    }
+    return out;
 }
 
 """Every OCR word on one frame - the debug overlay's data, fetched on demand."""

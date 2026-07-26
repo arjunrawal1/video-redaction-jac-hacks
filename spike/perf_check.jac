@@ -8,6 +8,7 @@ import os;
 import time;
 import from medialib.ocr { detect_words }
 import from ingest { ingest_video }
+import from ocr { launch_ocr }
 
 include graph;
 
@@ -26,7 +27,8 @@ with entry {
     print(f"serial textract: {t_serial:.2f}s per frame");
 
     t0 = time.perf_counter();
-    futures = [flow detect_words(p) for p in paths];
+    # Through the launcher, or every task in the batch reads the last path.
+    futures = [launch_ocr(p) for p in paths];
     batch = [wait fut for fut in futures];
     t_par = time.perf_counter() - t0;
     total = sum([len(b) for b in batch]);

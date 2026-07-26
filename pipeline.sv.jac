@@ -24,8 +24,13 @@ import from library { FIXTURE_MARK }
 
 include graph;
 
-"""Find a video by the id the client was given."""
-def find_video(video_id: str) -> Video | None {
+"""Find a video by the id the client was given.
+
+Named for what it matches on: the ingest pass has its own lookup keyed by
+content hash, and two functions called `find_video` in scope resolve to one of
+them, which answers None for every id it is handed.
+"""
+def video_by_id(video_id: str) -> Video | None {
     for v in [root -->[?:Video]] {
         if jid(v) == video_id {
             return v;
@@ -62,17 +67,23 @@ def:pub run_pipeline(
     max_steps: int = 8,
     reread: bool = False
 ) -> Generator {
+    # Resolved out here, not inside the generator. The generator body runs
+    # while the response is being written, and `root` is not the caller's root
+    # by then -- every graph query made from in there comes back empty.
+    # Anything reached before the first yield stays reachable afterwards.
+    found = video_by_id(video_id);
+    frames = [found ->:Contains:->[?:Frame]] if found is not None else [];
+    standing = [b for f in frames for b in [f ->:Detected:->[?:Box]]];
+
     def stream -> Generator[str, None, None] {
         started = time.perf_counter();
 
-        vid = find_video(video_id);
-        if vid is None {
+        if found is None {
             yield event("error", f"No video with id {video_id}.");
             return;
         }
+        vid: Video = found;
 
-        frames = [vid ->:Contains:->[?:Frame]];
-        standing = [b for f in frames for b in [f ->:Detected:->[?:Box]]];
         if standing {
             fixture = len([b for b in standing if FIXTURE_MARK in b.reason]);
             hint = " They are fixture boxes; clear_demo_cascade removes them." if fixture else "";
@@ -216,20 +227,22 @@ and the same answer twice, so asking again to show what happened would be
 wasteful and would risk a different result on stage.
 """
 def:pub replay_pipeline(video_id: str, beat: float = 0.55) -> Generator {
+    found = video_by_id(video_id);
+    recorded = list(found.run_log) if found is not None else [];
+
     def stream -> Generator[str, None, None] {
-        vid = find_video(video_id);
-        if vid is None {
+        if found is None {
             yield event("error", f"No video with id {video_id}.");
             return;
         }
-        if not vid.run_log {
+        if not recorded {
             yield event(
                 "error",
                 "No recorded run for this video. Press run to make one."
             );
             return;
         }
-        for frame in vid.run_log {
+        for frame in recorded {
             time.sleep(max(0.0, beat));
             yield frame;
         }
@@ -253,7 +266,7 @@ rather than spending another few minutes of model time to regenerate text that
 is already known.
 """
 def:pub record_run(video_id: str, request: str, lines: list[str]) -> RunRecord {
-    vid = find_video(video_id);
+    vid = video_by_id(video_id);
     if vid is None {
         return RunRecord(present=False, request="", steps=0);
     }
@@ -264,7 +277,7 @@ def:pub record_run(video_id: str, request: str, lines: list[str]) -> RunRecord {
 
 """Report whether a video already has a run the console can play back."""
 def:pub get_run_record(video_id: str) -> RunRecord {
-    vid = find_video(video_id);
+    vid = video_by_id(video_id);
     if vid is None {
         return RunRecord(present=False, request="", steps=0);
     }

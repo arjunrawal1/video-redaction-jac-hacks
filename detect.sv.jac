@@ -1,0 +1,300 @@
+"""Deciding which words on a frame the policy requires redacting.
+
+Evaluation is a walk over the policy subgraph. Each leaf answers for itself,
+each operator combines what its children answered, and the runtime picks which
+ability runs by the type of node the walker arrived at. There is no evaluator
+function and no kind switch.
+
+The combining step relies on exit abilities running post-order: children are
+reached on the way down and have all reported by the time the operator's exit
+ability fires on the way back up.
+
+Only a sparse set of seed frames is evaluated. Propagating a detection across
+neighbouring frames is the cascade's job, and it is far cheaper than asking a
+model about every frame.
+"""
+
+import from difflib { SequenceMatcher }
+import from jaclang.byllm.lib { Image }
+import from ai { pick_sensitive, format_words }
+
+include graph;
+
+glob FUZZY_THRESHOLD: float = 0.82;
+
+# Picks below this are more often the model reaching than finding. Redacting
+# the wrong thing is visible and embarrassing; the cascade gets a second look
+# at anything genuinely present.
+glob MIN_PICK_CONFIDENCE: float = 0.5;
+
+"""Loose text match tolerating the odd OCR error."""
+def soft_match(word: str, needle: str, fuzzy: bool) -> bool {
+    a = " ".join(word.lower().split());
+    b = " ".join(needle.lower().split());
+    if not b {
+        return False;
+    }
+    if b in a or a in b {
+        return True;
+    }
+    if not fuzzy {
+        return False;
+    }
+    return SequenceMatcher(None, a, b).ratio() >= FUZZY_THRESHOLD;
+}
+
+"""Merge picked words into as few rectangles as cover them.
+
+A redaction should read as one bar over a value, not a row of tiles over each
+of its words. Words merge when they share a line and nearly touch.
+"""
+def merge_picks(words: list[WordBox], indices: list[int]) -> list[WordBox] {
+    chosen = [words[i] for i in sorted(indices) if 0 <= i < len(words)];
+    if not chosen {
+        return [];
+    }
+
+    # Reading order: down the page, then across.
+    keyed = sorted([(w.y0 * 10000 + w.x0, i) for (i, w) in enumerate(chosen)]);
+    ordered = [chosen[i] for (_, i) in keyed];
+    merged: list[WordBox] = [ordered[0]];
+
+    for w in ordered[1:] {
+        last = merged[-1];
+        height = max(1, last.y1 - last.y0);
+        same_line = abs(w.y0 - last.y0) <= height // 2;
+        # A space between words is roughly half a line height wide.
+        adjacent = w.x0 - last.x1 <= height;
+
+        if same_line and adjacent and w.x0 >= last.x0 {
+            merged[-1] = WordBox(
+                text=f"{last.text} {w.text}",
+                y0=min(last.y0, w.y0),
+                x0=min(last.x0, w.x0),
+                y1=max(last.y1, w.y1),
+                x1=max(last.x1, w.x1),
+                conf=min(last.conf, w.conf)
+            );
+        } else {
+            merged.append(w);
+        }
+    }
+
+    return merged;
+}
+
+"""How a region leaf is phrased when put to the model."""
+def region_scope(leaf: RegionLeaf) -> str {
+    scope = f"text located in or on {leaf.description}";
+    return f"{scope} (every instance)" if leaf.all_instances else scope;
+}
+
+"""How a semantic leaf is phrased when put to the model."""
+def semantic_scope(leaf: SemanticLeaf) -> str {
+    return f"{leaf.category}: {leaf.description}";
+}
+
+"""Put one question to the model about one frame.
+
+Takes plain values rather than a Frame so it never reads the graph, which
+keeps it honest about being a pure call.
+"""
+def run_ask(frame_path: str, scope: str, listing: str, limit: int) -> list[int] {
+    picks = pick_sensitive(Image(frame_path), scope, listing);
+    return sorted({
+        p.index for p in picks
+        if 0 <= p.index < limit and p.confidence >= MIN_PICK_CONFIDENCE
+    });
+}
+
+"""A question one policy leaf needs answered about a frame."""
+obj Ask {
+    has leaf_id: str;
+    has scope: str;
+}
+
+walker CollectAsks {
+    """Gather the leaves that need a model call, without making any."""
+
+    has asks: list[Ask] = [];
+
+    can on_policy with Policy entry { visit [here ->:Governs:->]; }
+
+    can on_op with AndOp | OrOp | NotOp entry { visit [here ->:Child:->]; }
+
+    can on_region with RegionLeaf entry {
+        self.asks.append(Ask(leaf_id=jid(here), scope=region_scope(here)));
+    }
+
+    can on_semantic with SemanticLeaf entry {
+        self.asks.append(Ask(leaf_id=jid(here), scope=semantic_scope(here)));
+    }
+}
+
+walker EvalPredicate {
+    """Report the indices of a frame's words that satisfy a policy."""
+
+    has frame: Frame;
+    has cache: dict[str, list[int]] = {};
+    has hits: dict[str, list[int]] = {};
+    has result: list[int] = [];
+    has llm_calls: int = 0;
+
+    can on_policy with Policy entry {
+        visit [here ->:Governs:->];
+    }
+
+    can on_op with AndOp | OrOp | NotOp entry {
+        visit [here ->:Child:->];
+    }
+
+    can on_text with TextLeaf entry {
+        self.hits[jid(here)] = [
+            i for (i, w) in enumerate(self.frame.words)
+            if soft_match(w.text, here.text, here.fuzzy)
+        ];
+    }
+
+    can on_region with RegionLeaf entry {
+        self.hits[jid(here)] = self.ask(here, region_scope(here));
+    }
+
+    can on_semantic with SemanticLeaf entry {
+        self.hits[jid(here)] = self.ask(here, semantic_scope(here));
+    }
+
+    can and_done with AndOp exit {
+        self.combine(here, "and");
+    }
+
+    can or_done with OrOp exit {
+        self.combine(here, "or");
+    }
+
+    can not_done with NotOp exit {
+        inner: set[int] = set();
+        for k in [here ->:Child:->] {
+            inner |= set(self.hits.get(jid(k), []));
+        }
+        everything = set(range(len(self.frame.words)));
+        self.hits[jid(here)] = sorted(everything - inner);
+    }
+
+    can finish with Policy exit {
+        governed = [here ->:Governs:->];
+        picked: set[int] = set();
+        for g in governed {
+            picked |= set(self.hits.get(jid(g), []));
+        }
+        self.result = sorted(picked);
+    }
+
+    """Answer a leaf's question, preferring a pre-fetched answer.
+
+    Callers that evaluate many frames fill `cache` first so the walk itself
+    makes no network calls (see `SeedDetect`).
+    """
+    def ask(leaf: PredNode, scope: str) -> list[int] {
+        key = jid(leaf);
+        if key in self.cache {
+            return self.cache[key];
+        }
+        if not self.frame.words {
+            return [];
+        }
+        self.llm_calls += 1;
+        return run_ask(
+            self.frame.jpeg_path,
+            scope,
+            format_words([w.text for w in self.frame.words]),
+            len(self.frame.words)
+        );
+    }
+
+    def combine(at: PredNode, how: str) {
+        kids = [at ->:Child:->];
+        sets = [set(self.hits.get(jid(k), [])) for k in kids];
+        if not sets {
+            self.hits[jid(at)] = [];
+            return;
+        }
+        out = sets[0];
+        for s in sets[1:] {
+            out = (out & s) if how == "and" else (out | s);
+        }
+        self.hits[jid(at)] = sorted(out);
+    }
+}
+
+"""Evaluate one frame against a policy. Shaped as a function so a batch of
+frames can be launched together with `flow`."""
+def evaluate_frame(pol: Policy, fr: Frame) -> list[int] {
+    return (EvalPredicate(frame=fr) spawn pol).result;
+}
+
+walker SeedDetect {
+    """Detect on a sparse set of frames and attach the resulting boxes.
+
+    Every frame is not worth a model call. Seeds are spaced across the video
+    and the cascade carries each detection outwards from there, which is both
+    cheaper and the only way the pipeline can claim to track content rather
+    than re-find it.
+    """
+
+    has policy: Policy;
+    has stride: int = 8;
+    has redetect: bool = False;
+    has seeds: list[Frame] = [];
+    has boxes_added: int = 0;
+    has model_calls: int = 0;
+
+    can start with Video entry {
+        visit [here ->:Contains:->[?:Frame, index == 1]];
+    }
+
+    can pick with Frame entry {
+        due = (here.index - 1) % self.stride == 0;
+        already = len([here ->:Detected:->]) > 0;
+        if due and here.words and (self.redetect or not already) {
+            self.seeds.append(here);
+        }
+        visit [here ->:Next:->];
+    }
+
+    can detect with Video exit {
+        asks = (CollectAsks() spawn self.policy).asks;
+
+        jobs = [(fr, a) for fr in self.seeds for a in asks];
+
+        # Read what the calls need while still here, then ask one at a time.
+        # Overlapping these calls returns the same answer for every frame in
+        # the batch -- measured, not assumed -- and the failure is silent, so
+        # this stays sequential until byLLM is safe to fan out. See AGENTS.md.
+        cached: dict[str, dict[str, list[int]]] = {};
+        for (fr, a) in jobs {
+            listing = format_words([w.text for w in fr.words]);
+            found = run_ask(fr.jpeg_path, a.scope, listing, len(fr.words));
+            key = jid(fr);
+            if key not in cached {
+                cached[key] = {};
+            }
+            cached[key][a.leaf_id] = found;
+        }
+        self.model_calls = len(jobs);
+
+        for fr in self.seeds {
+            ev = EvalPredicate(frame=fr, cache=cached.get(jid(fr), {}))
+                spawn self.policy;
+            for m in merge_picks(fr.words, ev.result) {
+                fr +>:Detected:+> Box(
+                    y0=m.y0, x0=m.x0, y1=m.y1, x1=m.x1,
+                    text=m.text,
+                    origin="seed",
+                    confidence=m.conf,
+                    reason="matched the policy on a seed frame"
+                );
+                self.boxes_added += 1;
+            }
+        }
+    }
+}

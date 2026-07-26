@@ -50,6 +50,24 @@ pipeline reasons about and traverses between: frames, boxes, tracks, agents,
 policy. Bulk data goes in a field. If you are about to create thousands of
 nodes, stop.
 
+**Do not run `by llm()` calls concurrently.** Fanning them out with `flow`
+returns the *same* answer for every call in the batch. Measured directly:
+seven frames run one at a time gave seven different correct answers; the same
+seven in batches of four gave one answer per batch, repeated. Nothing raises,
+the shapes are right, and the results are quietly wrong -- for this pipeline
+that means confidently redacting the wrong words. Textract calls under `flow`
+are fine (that is the 11x win in the OCR pass), so this is specific to byLLM.
+The boundary is not fully characterised: the same fan-out from a module-level
+`with entry` did return distinct answers. Until that is understood, model
+calls stay sequential.
+
+**Never touch the graph inside a `flow`.** Reading a node's fields from a
+worker thread can return another thread's data and raise `WriteConflict` on an
+all-zero anchor. Do every node read on the calling thread, pass plain strings
+and ints across the boundary, and write results back after `wait`. Spawning
+walkers concurrently is unsafe for the same reason -- traversal carries ambient
+context.
+
 **Persistence is scoped per entry file.** `jac run spike/foo.jac` reads and
 writes `.jac/data/foo.db`; a different entry file sees a different graph. Two
 spikes cannot observe each other's data, and the app under `jac start` uses

@@ -90,9 +90,17 @@ from it, each with an index. Judge with the image for context and answer only
 with indices from the list.
 
 Select every word that must be covered, including each word of a multi-word
-value. Return an empty list when the frame contains nothing matching. Do not
-select chrome the user did not ask about -- menus, toolbars, tab titles, and
-application labels are not sensitive unless the policy says so.""";
+value. Return an empty list when the frame contains nothing matching -- that
+is a perfectly good answer and much better than a guess.
+
+Be strict about what counts. Application furniture is never sensitive unless
+the policy explicitly asks for it: menu bars, toolbars, tab and window titles,
+bookmarks, sidebars and side panels, buttons, status bars, and the row and
+column headers of a grid. Content the user entered is not the same as the
+labels around it.
+
+Only select a word you can actually see in the image at the place the policy
+describes. If you are reaching, leave it out and give it a low confidence.""";
 sem pick_sensitive.shot = "The frame being examined.";
 sem pick_sensitive.policy = "What must be redacted.";
 sem pick_sensitive.words = "The frame's OCR words, one per line as 'index: text'.";

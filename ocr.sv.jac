@@ -1,0 +1,64 @@
+"""Reading text off every frame.
+
+The walk itself is trivial - follow Next to the end of the chain - but it is
+where the pipeline stops being sequential. Textract calls block, so frames are
+collected during the walk and fanned out in batches once it finishes.
+
+Words are written inline on the frame rather than as nodes. A video yields
+tens of thousands of them, and graph writes cost time proportional to the
+whole graph, so promoting raw OCR to nodes makes the pass quadratic.
+
+Frames remember that they have been read, so a second run over the same video
+does no network work at all.
+"""
+
+import from medialib.ocr { detect_words }
+
+include graph;
+
+walker ReadText {
+    """Attach a Word node per token Textract finds, for every unread frame."""
+
+    # Textract's synchronous API throttles in the low tens of requests per
+    # second. Batching keeps the fan-out well inside that without needing
+    # retry backoff to carry the load.
+    has batch_size: int = 8;
+    has pending: list[Frame] = [];
+    has frames_read: int = 0;
+    has words_added: int = 0;
+
+    can start with Video entry {
+        visit [here ->:Contains:->[?:Frame, index == 1]];
+    }
+
+    can collect with Frame entry {
+        if not here.ocr_done {
+            self.pending.append(here);
+        }
+        visit [here ->:Next:->];
+    }
+
+    can run_ocr with Video exit {
+        start = 0;
+        while start < len(self.pending) {
+            chunk = self.pending[start:start + self.batch_size];
+
+            # Launch the whole batch before waiting on any of it; a wait
+            # inside the launch loop would serialize the calls.
+            futures = [flow detect_words(fr.jpeg_path) for fr in chunk];
+            batch = [wait fut for fut in futures];
+
+            for (fr, words) in zip(chunk, batch) {
+                fr.words = [
+                    WordBox(text=w.text, y0=w.y0, x0=w.x0, y1=w.y1, x1=w.x1, conf=w.conf)
+                    for w in words
+                ];
+                fr.ocr_done = True;
+                self.frames_read += 1;
+                self.words_added += len(words);
+            }
+
+            start += self.batch_size;
+        }
+    }
+}

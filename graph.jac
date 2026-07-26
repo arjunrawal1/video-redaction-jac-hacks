@@ -12,6 +12,13 @@ ever see a pixel coordinate.
 Do not move this file. Archetype identity includes the module path, so
 relocating it orphans every already-persisted node with no error at either
 compile or query time.
+
+What is a node and what is a field: every graph write costs time proportional
+to the total size of the graph, so bulk data must not become nodes. Raw OCR
+output is tens of thousands of words per video and lives inline on the frame
+that produced it. Nodes are reserved for things the pipeline reasons about and
+traverses between: frames, redactions, tracks, agents, policy. Measured, that
+is the difference between a six-minute OCR pass and a thirty-second one.
 """
 
 # ---------------------------------------------------------------- media
@@ -27,6 +34,16 @@ node Video {
     has export_path: str = "";
 }
 
+"""One word Textract found, in box_2d order on the 0..1000 scale."""
+obj WordBox {
+    has text: str;
+    has y0: int;
+    has x0: int;
+    has y1: int;
+    has x1: int;
+    has conf: float = 0.0;
+}
+
 node Frame {
     has index: int;              # 1-based position among kept frames
     has source_index: int;       # 0-based index in the original decode order
@@ -35,15 +52,7 @@ node Frame {
     has height: int = 0;
     has jpeg_path: str = "";
     has ocr_done: bool = False;
-}
-
-node Word {
-    has text: str;
-    has y0: int;
-    has x0: int;
-    has y1: int;
-    has x1: int;
-    has conf: float = 0.0;
+    has words: list[WordBox] = [];
 }
 
 # ---------------------------------------------------------------- redaction
@@ -110,10 +119,8 @@ node Policy {
 
 edge Contains : Video --> Frame {}
 edge Next     : Frame --> Frame {}     # the road the cascade walks
-edge Seen     : Frame --> Word {}
 edge Detected : Frame --> Box {}
 edge MemberOf : Box --> Track {}       # identity of one redaction across frames
-edge Adopted  : Box --> Word {}        # this box was grounded in this OCR word
 edge AddedBy  : Box --> Agent {}       # provenance
 edge SpawnedBy: Agent --> Agent {}     # cascade lineage
 edge Governs  : Policy --> PredNode {}

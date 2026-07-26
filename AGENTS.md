@@ -118,13 +118,49 @@ name and silently shadows. This project uses `medialib/`.
   speedup on Textract.
 - A walker that never `visit`s should be a `def:pub` function instead.
 
+## Web layer notes
+
+**There is no FastAPI here.** Without `fastapi`/`starlette` installed, the
+runtime falls back to a bare `http.server` that routes only `/function/*`,
+`/walker/*`, `/user/*`, static assets, and the SPA catch-all. `@restspec`
+custom paths silently fall through to the SPA HTML rather than erroring, and
+raw-bytes responses (`envelope=False, produces=...`) do not exist on this
+server. Frames and exports are served instead by the static resolver:
+`assets/media` symlinks to `media/`, and `/static/media/<rel>` resolves under
+both `jac start` and `jac start --dev`.
+
+**An endpoint must be named in `main.jac`'s import** or it answers 405.
+
+**`skip` does not suppress sibling JSX children.** `{if cond { ... skip; }}`
+followed by a sibling renders both. Use `if/else`.
+
+**Per-component `.style.css` annexes 500 in this runtime** -- the compiler
+injects an import for `Comp.css` while only `Comp.style.css` reaches the
+bundle. All styling lives in `assets/theme.css` with per-component prefixes.
+
+**Restarting the server needs `pkill -f "jac start"` and `pkill -f "jac/rt"`.**
+The child outlives the parent, and accumulated runtimes wedge the
+single-threaded server.
+
+**Reads run on the calling user's root**, so the app's graph cannot be seeded
+by a spike -- seed it over HTTP.
+
 ## Media notes
 
 - Screen recordings often carry non-full-range YUV, which the mjpeg encoder
   rejects. The extract filter chain normalizes with `format=yuvj420p`.
 - Box geometry is stored in box_2d order `[y0, x0, y1, x1]` on a 0..1000 scale,
-  normalized against the frame. Convert to pixels only at export. This is the
-  easiest thing in the project to get wrong.
+  normalized against the frame. Convert to pixels only at export, and to CSS
+  only in `components/overlay_geometry.cl.jac`. This is the easiest thing in
+  the project to get wrong.
+- ffmpeg dies with SIGBUS and an *empty* stderr somewhere above ~3,600 chained
+  `drawbox` filters. The export splits into sequential passes of 1,500 to stay
+  clear of it, and reports the signal when ffmpeg dies silently -- otherwise a
+  long run ships an unredacted video that looks like a success.
+- A long filter chain also blows the argv limit, so it goes to a file read with
+  `-filter_complex_script`.
+- The export filename carries a hash of the exact spans burned into it, so a
+  changed box set cannot be served yesterday's video.
 
 ## Conventions
 

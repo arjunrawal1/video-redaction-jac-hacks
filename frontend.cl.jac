@@ -1,79 +1,31 @@
-"""video-redaction-jac-hacks - Client-Side UI."""
+"""Client shell: the route table, and nothing else.
 
-import from .components.MessageCard { MessageCard }
+Manual routing (no `pages/` directory), so navigation is `<Link>` all the way
+down and a frame selection is a URL, not a call: /video/<id>/frame/<n> is
+shareable and survives a reload. Each page below owns its own state.
+"""
 
-sv import from endpoints { Message, PostMessage, ListMessages }
+import from "@jac/runtime" { Router, Routes, Route, Navigate, useParams }
+import from .components.LibraryPage { LibraryPage }
+import from .components.StudioPage { StudioPage }
+
+"""A video with no frame in the URL means frame 1."""
+def VideoEntry -> JsxElement {
+    params = useParams();
+    if not params["id"] {
+        return <Navigate to="/" replace={True}/>;
+    }
+    video_id: str = str(params["id"]);
+    return <Navigate to={f"/video/{video_id}/frame/1"} replace={True}/>;
+}
 
 def:pub app -> JsxElement {
-    has messages: list[Message] = [],
-        author: str = "",
-        text: str = "";
-
-    # Load existing messages once, when the component first mounts.
-    can with entry {
-        loadMessages();
-    }
-
-    async def loadMessages -> None;
-    async def postMessage(e: FormEvent) -> None;
-
-    return
-        <div
-            style={{
-                "maxWidth": "600px",
-                "margin": "2rem auto",
-                "padding": "0 1rem",
-                "fontFamily": "system-ui, -apple-system, sans-serif",
-                "color": "#1a1a2e"
-            }}
-        >
-            <h1>video-redaction-jac-hacks</h1>
-            <p style={{"color": "#666"}}>A tiny full-stack guestbook in Jac.</p>
-            <form
-                onSubmit={postMessage}
-                style={{"display": "flex", "gap": "0.5rem", "marginBottom": "1.5rem"}}
-            >
-                <input
-                    type="text"
-                    value={author}
-                    onChange={lambda (e: ChangeEvent) { author = e.target.value; }}
-                    placeholder="Name"
-                    style={{
-                        "flex": "1",
-                        "padding": "0.6rem",
-                        "border": "1px solid #ddd",
-                        "borderRadius": "6px"
-                    }}
-                />
-                <input
-                    type="text"
-                    value={text}
-                    onChange={lambda (e: ChangeEvent) { text = e.target.value; }}
-                    placeholder="Say something..."
-                    style={{
-                        "flex": "2",
-                        "padding": "0.6rem",
-                        "border": "1px solid #ddd",
-                        "borderRadius": "6px"
-                    }}
-                />
-                <button
-                    type="submit"
-                    style={{
-                        "padding": "0.6rem 1.2rem",
-                        "backgroundColor": "#4CAF50",
-                        "color": "white",
-                        "border": "none",
-                        "borderRadius": "6px",
-                        "cursor": "pointer"
-                    }}
-                >
-                    Post
-                </button>
-            </form>
-            {[
-                <MessageCard key={idx} author={msg.author} text={msg.text}/>
-                for (idx, msg) in enumerate(messages)
-            ]}
-        </div>;
+    return <Router>
+        <Routes>
+            <Route path="/" element={<LibraryPage/>}/>
+            <Route path="/video/:id" element={<VideoEntry/>}/>
+            <Route path="/video/:id/frame/:index" element={<StudioPage/>}/>
+            <Route path="*" element={<Navigate to="/" replace={True}/>}/>
+        </Routes>
+    </Router>;
 }

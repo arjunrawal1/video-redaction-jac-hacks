@@ -16,6 +16,17 @@ import from medialib.ocr { detect_words }
 
 include graph;
 
+"""Launch one Textract call on the pool.
+
+`flow` compiles to a lambda taking no arguments, so a `flow` written directly
+inside a loop re-reads the loop variable on the worker and every task in the
+batch ends up reading the last frame. Going through a call gives each launch
+its own frame, and `path` cannot be reassigned underneath it. See AGENTS.md.
+"""
+def launch_ocr(path: str) -> object {
+    return flow detect_words(path);
+}
+
 walker ReadText {
     """Attach a Word node per token Textract finds, for every unread frame."""
 
@@ -43,9 +54,13 @@ walker ReadText {
         while start < len(self.pending) {
             chunk = self.pending[start:start + self.batch_size];
 
+            # Read the paths here, on the walker's own thread: a worker that
+            # touches the graph reads another thread's data.
+            paths = [fr.jpeg_path for fr in chunk];
+
             # Launch the whole batch before waiting on any of it; a wait
             # inside the launch loop would serialize the calls.
-            futures = [flow detect_words(fr.jpeg_path) for fr in chunk];
+            futures = [launch_ocr(p) for p in paths];
             batch = [wait fut for fut in futures];
 
             for (fr, words) in zip(chunk, batch) {

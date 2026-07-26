@@ -63,9 +63,10 @@ the caller's own separate call.
 def:pub run_pipeline(
     video_id: str,
     request: str,
-    stride: int = 8,
+    stride: int = 1,
     max_steps: int = 8,
-    reread: bool = False
+    reread: bool = False,
+    over: bool = False
 ) -> Generator {
     # Resolved out here, not inside the generator. The generator body runs
     # while the response is being written, and `root` is not the caller's root
@@ -84,7 +85,13 @@ def:pub run_pipeline(
         }
         vid: Video = found;
 
-        if standing {
+        if standing and over {
+            yield event(
+                "start",
+                f"Adding to {len(standing)} redaction(s) already on this video; "
+                "anything found again lands on top of itself."
+            );
+        } elif standing {
             fixture = len([b for b in standing if FIXTURE_MARK in b.reason]);
             hint = " They are fixture boxes; clear_demo_cascade removes them." if fixture else "";
             yield event(
@@ -143,7 +150,8 @@ def:pub run_pipeline(
         }
 
         # --- detection ----------------------------------------------------
-        yield keep(log, event("detect", f"Judging every {stride}th frame against the policy."));
+        scan = "every frame" if stride <= 1 else f"every {stride}th frame";
+        yield keep(log, event("detect", f"Putting {scan} to the model against the policy."));
         mark = time.perf_counter();
         found = SeedDetect(policy=pol, stride=stride) spawn vid;
         yield keep(log, event(
@@ -168,7 +176,10 @@ def:pub run_pipeline(
         }
 
         # --- cascade ------------------------------------------------------
-        yield keep(log, event("cascade", "Sending agents out from each seed frame."));
+        yield keep(log, event(
+            "cascade",
+            "Sending agents into the frames where a detection stops."
+        ));
         mark = time.perf_counter();
         run = SeedCascades(max_steps=max_steps) spawn vid;
         for a in run.agents {

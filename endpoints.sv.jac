@@ -96,13 +96,15 @@ glob SEARCH_DIRS: list[str] = [
 ];
 
 """Ingest a video already on the server's disk and OCR it. Dev seeding only."""
-def:pub seed_from_path(source_path: str, fps: float = 8.0) -> IngestOutcome {
+def:pub seed_from_path(
+    source_path: str, fps: float = 8.0, title: str = ""
+) -> IngestOutcome {
     if not os.path.exists(source_path) {
         return IngestOutcome(
             accepted=False, message=f"no such file: {source_path}", video_id=""
         );
     }
-    vid = ingest_video(source_path, fps=fps);
+    vid = ingest_video(source_path, title=title, fps=fps);
     run = ReadText() spawn vid;
     frames = [vid ->:Contains:->[?:Frame]];
     return IngestOutcome(
@@ -566,6 +568,65 @@ def _wipe_fixtures(frames: list[Frame]) -> CascadeWipe {
             f"removed {boxes} fixture box(es), {agents} agent(s) left with "
             f"nothing to their name, {tracks} empty track(s)"
         )
+    );
+}
+
+"""Take every redaction off a video so a different request can be run.
+
+`clear_demo_cascade` only lifts fixture data; this removes real detector output
+too, along with the agents and tracks left with nothing to their name. Its own
+call because deleting and creating inside one request throws the new nodes
+away.
+"""
+def:pub clear_video_boxes(video_id: str) -> CascadeWipe {
+    target: Video | None = None;
+    for v in [root -->[?:Video]] {
+        if jid(v) == video_id {
+            target = v;
+        }
+    }
+    if target is None {
+        return CascadeWipe(
+            boxes=0, agents=0, tracks=0, message=f"no video with id {video_id}"
+        );
+    }
+
+    # The edge goes, not the node. Deleting the Box itself reports success and
+    # leaves it on the graph after the request; dropping the edge that makes it
+    # part of the frame is what actually takes effect, and an unreachable box
+    # is invisible to every reader here.
+    boxes = 0;
+    for f in [target ->:Contains:->[?:Frame]] {
+        for e in [edge f ->:Detected:->] {
+            del e;
+            boxes += 1;
+        }
+    }
+
+    agents = 0;
+    for a in [root -->[?:Agent]] {
+        if not [a <-:AddedBy:<-[?:Box]] {
+            del a;
+            agents += 1;
+        }
+    }
+
+    tracks = 0;
+    for t in [root -->[?:Track]] {
+        if not [t <-:MemberOf:<-[?:Box]] {
+            del t;
+            tracks += 1;
+        }
+    }
+
+    target.run_log = [];
+    target.run_request = "";
+
+    return CascadeWipe(
+        boxes=boxes,
+        agents=agents,
+        tracks=tracks,
+        message=f"removed {boxes} box(es), {agents} agent(s), {tracks} track(s)"
     );
 }
 

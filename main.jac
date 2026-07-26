@@ -13,7 +13,8 @@ import from library {
 }
 import from endpoints {
     IngestOutcome, CascadeSeed, CascadeWipe,
-    request_ingest, seed_from_path, seed_demo_cascade, clear_demo_cascade
+    request_ingest, seed_from_path, seed_demo_cascade, clear_demo_cascade,
+    clear_video_boxes
 }
 # The two streams are read with a raw fetch to get the frames as they arrive,
 # so no generated stub mentions them and only this import registers the routes.

@@ -1,10 +1,11 @@
-"""Agents that carry a detection outwards from the frame it was found on.
+"""Agents that carry a detection into the frames detection missed.
 
-Seed detection only looks at a few frames. What makes the rest of the video
-safe is a pair of agents per seed -- one walking forward along the Next chain,
-one walking back -- each carrying the values found on that frame and checking,
-frame by frame, whether they are still on screen. A value that disappears is
-dropped; an agent with nothing left to follow stops.
+Judging a frame on its own cannot distinguish content that has left the screen
+from content it failed to see; both are simply absent. An agent settles that by
+walking the Next chain from a frame where the value was found into the frames
+where it was not, checking each one against the value it is carrying. A value
+the model confirms is gone is dropped; an agent with nothing left to follow
+stops.
 
 The walk is the algorithm. There is no queue to manage and no visited set to
 maintain: the agent moves along an edge, the arrival ability runs, and the
@@ -152,7 +153,21 @@ walker Cascade {
 }
 
 walker SeedCascades {
-    """Launch a forward and a backward agent from every seeded frame."""
+    """Send an agent wherever a detected value stops being detected.
+
+    Every frame is put to the model, so most of the video is covered before an
+    agent moves at all. What detection cannot do is tell a value that left the
+    screen apart from one it simply failed to see: both look like absence on a
+    single frame. Only the frames on either side answer that.
+
+    So an agent launches at a boundary -- a frame holding a value its neighbour
+    does not -- and walks into the gap carrying just the values that went
+    missing there. It writes a box wherever the value is still visible and
+    stops when the model says it is genuinely gone, or when it reaches ground
+    already covered. Frames where detection agreed with itself never need one,
+    which is why the number of agents is a reading of how much detection
+    missed.
+    """
 
     has why: str = "matched the redaction policy";
     has max_steps: int = 8;
@@ -163,61 +178,84 @@ walker SeedCascades {
 
     can start with Video entry {
         self.video = here;
-        visit [here ->:Contains:->[?:Frame, index == 1]];
-    }
+        frames = sorted(
+            [here ->:Contains:->[?:Frame]], key=lambda (f: Frame) { f.index; }
+        );
 
-    can survey with Frame entry {
-        seeded = [b for b in [here ->:Detected:->] if b.origin == "seed"];
-        if seeded {
-            self.launch(here, seeded);
-        }
-        visit [here ->:Next:->];
-    }
-
-    def launch(at: Frame, seeded: list[Box]) {
-        # One value can appear on many seed frames; it is one tracked thing.
-        for b in seeded {
-            if b.text not in self.tracks {
-                fresh = Track(label=b.text);
-                root ++> fresh;
-                self.tracks[b.text] = fresh;
+        # Detection has to be read whole before any agent moves: a boundary is
+        # a fact about two frames, and an agent that started earlier would be
+        # writing boxes into the very map being read.
+        found: dict[int, set[str]] = {};
+        for f in frames {
+            seeded = [b for b in [f ->:Detected:->[?:Box]] if b.origin == "seed"];
+            for b in seeded {
+                self.enrol(b);
             }
-            b +>:MemberOf:+> self.tracks[b.text];
+            found[f.index] = {b.text for b in seeded};
         }
 
-        targets = sorted({b.text for b in seeded});
-
-        for (name, ahead) in [("forward", True), ("backward", False)] {
-            agent = Agent(
-                agent_id=f"{name}-{at.index}",
-                direction=name,
-                seed_index=at.index,
-                focus=at.index
-            );
-            root ++> agent;
-            # An agent that places no boxes has no frames to be found through,
-            # so the video claims it directly.
-            if self.video is not None {
-                self.video +>:Ran:+> agent;
+        order = [f.index for f in frames];
+        for (pos, f) in enumerate(frames) {
+            mine = found[f.index];
+            if not mine {
+                continue;
             }
-            self.agents.append(agent);
-
-            run = Cascade(
-                agent=agent,
-                targets=list(targets),
-                why=self.why,
-                tracks=self.tracks,
-                forward=ahead,
-                max_steps=self.max_steps
-            );
-
-            neighbours = [at ->:Next:->] if ahead else [at <-:Next:<-];
-            if neighbours {
-                run spawn neighbours[0];
-                self.boxes_added += run.boxes_added;
-            } else {
-                agent.summary = f"{name} from frame {at.index}: no frame that way";
+            if pos + 1 < len(order) {
+                gap = sorted(mine - found[order[pos + 1]]);
+                if gap {
+                    self.launch(f, gap, True);
+                }
             }
+            if pos > 0 {
+                gap = sorted(mine - found[order[pos - 1]]);
+                if gap {
+                    self.launch(f, gap, False);
+                }
+            }
+        }
+    }
+
+    """Give a detected value its track, so every box for it is one thing."""
+    def enrol(b: Box) {
+        if b.text not in self.tracks {
+            fresh = Track(label=b.text);
+            root ++> fresh;
+            self.tracks[b.text] = fresh;
+        }
+        b +>:MemberOf:+> self.tracks[b.text];
+    }
+
+    def launch(at: Frame, targets: list[str], ahead: bool) {
+        name = "forward" if ahead else "backward";
+        agent = Agent(
+            agent_id=f"{name}-{at.index}",
+            direction=name,
+            seed_index=at.index,
+            focus=at.index
+        );
+        root ++> agent;
+        # An agent that places no boxes has no frames to be found through, so
+        # the video claims it directly.
+        if self.video is not None {
+            self.video +>:Ran:+> agent;
+        }
+        self.agents.append(agent);
+
+        run = Cascade(
+            agent=agent,
+            targets=list(targets),
+            why=self.why,
+            tracks=self.tracks,
+            forward=ahead,
+            max_steps=self.max_steps
+        );
+
+        neighbours = [at ->:Next:->] if ahead else [at <-:Next:<-];
+        if neighbours {
+            run spawn neighbours[0];
+            self.boxes_added += run.boxes_added;
+        } else {
+            agent.summary = f"{name} from frame {at.index}: no frame that way";
         }
     }
 }

@@ -8,6 +8,10 @@ Box geometry convention: coordinates are stored in box_2d order
 [y_min, x_min, y_max, x_max] on a 0..1000 scale, normalized against the frame.
 Conversion to pixels happens only at export. Nothing upstream of export should
 ever see a pixel coordinate.
+
+Do not move this file. Archetype identity includes the module path, so
+relocating it orphans every already-persisted node with no error at either
+compile or query time.
 """
 
 # ---------------------------------------------------------------- media

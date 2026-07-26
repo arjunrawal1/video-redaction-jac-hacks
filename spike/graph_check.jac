@@ -50,14 +50,13 @@ with entry {
         vid = Video(title="demo", video_hash="abc123", width=1600, height=1034);
         root ++> vid;
 
-        prev: Frame | None = None;
-        for i in range(1, 5) {
-            f = Frame(index=i, source_index=(i - 1) * 6, timestamp=(i - 1) * 0.1);
+        built = [Frame(index=i, source_index=(i - 1) * 6, timestamp=(i - 1) * 0.1)
+                 for i in range(1, 5)];
+        for f in built {
             vid +>:Contains:+> f;
-            if prev is not None {
-                prev +>:Next:+> f;
-            }
-            prev = f;
+        }
+        for i in range(1, len(built)) {
+            built[i - 1] +>:Next:+> built[i];
         }
 
         pol = Policy(prompt="redact spreadsheet cell contents");

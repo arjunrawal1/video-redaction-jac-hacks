@@ -97,14 +97,17 @@ glob SEARCH_DIRS: list[str] = [
 
 """Ingest a video already on the server's disk and OCR it. Dev seeding only."""
 def:pub seed_from_path(
-    source_path: str, fps: float = 8.0, title: str = ""
+    source_path: str,
+    fps: float = 8.0,
+    title: str = "",
+    keep_all: bool = False
 ) -> IngestOutcome {
     if not os.path.exists(source_path) {
         return IngestOutcome(
             accepted=False, message=f"no such file: {source_path}", video_id=""
         );
     }
-    vid = ingest_video(source_path, title=title, fps=fps);
+    vid = ingest_video(source_path, title=title, fps=fps, keep_all=keep_all);
     run = ReadText() spawn vid;
     frames = [vid ->:Contains:->[?:Frame]];
     return IngestOutcome(

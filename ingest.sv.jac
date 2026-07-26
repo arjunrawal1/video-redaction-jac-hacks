@@ -40,7 +40,8 @@ def:pub ingest_video(
     source_path: str,
     title: str = "",
     fps: float = 0.0,
-    max_width: int = 1600
+    max_width: int = 1600,
+    keep_all: bool = False
 ) -> Video {
     digest = file_digest(source_path);
     existing = find_video(digest);
@@ -50,7 +51,15 @@ def:pub ingest_video(
 
     info = probe(source_path);
     out_dir = os.path.join(FRAME_ROOT, digest);
-    extracted = extract_frames(source_path, out_dir, max_width, fps=fps);
+    # A negative dedup threshold keeps every decoded frame: no frame is ever
+    # near enough to its predecessor to be dropped. That is what a caller wants
+    # when the model will look at all of them anyway, because then a skipped
+    # frame is simply a frame nobody checked.
+    extracted = (
+        extract_frames(source_path, out_dir, max_width, fps=fps, threshold=-1)
+        if keep_all
+        else extract_frames(source_path, out_dir, max_width, fps=fps)
+    );
 
     vid = Video(
         title=title or os.path.basename(source_path),

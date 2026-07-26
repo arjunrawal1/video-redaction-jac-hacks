@@ -12,6 +12,7 @@ Frames remember that they have been read, so a second run over the same video
 does no network work at all.
 """
 
+import os;
 import from medialib.ocr { detect_words }
 
 include graph;
@@ -30,10 +31,11 @@ def launch_ocr(path: str) -> object {
 walker ReadText {
     """Attach a Word node per token Textract finds, for every unread frame."""
 
-    # Textract's synchronous API throttles in the low tens of requests per
-    # second. Batching keeps the fan-out well inside that without needing
-    # retry backoff to carry the load.
-    has batch_size: int = 8;
+    # Textract's synchronous API takes far more concurrency than one video
+    # needs, so the batch is sized to keep the pass short rather than to stay
+    # clear of a limit. Overridable for the same reason it is not larger
+    # still: the ceiling is the account's, not this code's.
+    has batch_size: int = int(os.getenv("REDACTION_OCR_BATCH", "32"));
     has pending: list[Frame] = [];
     has frames_read: int = 0;
     has words_added: int = 0;

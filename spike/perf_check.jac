@@ -19,7 +19,9 @@ with entry {
     print(f"benchmarking {len(paths)} frames");
 
     t0 = time.perf_counter();
-    serial = [detect_words(p) for p in paths[:2]];
+    for p in paths[:2] {
+        detect_words(p);
+    }
     t_serial = (time.perf_counter() - t0) / 2;
     print(f"serial textract: {t_serial:.2f}s per frame");
 
@@ -33,9 +35,10 @@ with entry {
     t0 = time.perf_counter();
     scratch = Frame(index=9999, source_index=0);
     vid +>:Contains:+> scratch;
-    for w in batch[0] {
-        scratch +>:Seen:+> Word(text=w.text, y0=w.y0, x0=w.x0, y1=w.y1, x1=w.x1, conf=w.conf);
-    }
+    scratch.words = [
+        WordBox(text=w.text, y0=w.y0, x0=w.x0, y1=w.y1, x1=w.x1, conf=w.conf)
+        for w in batch[0]
+    ];
     t_write = time.perf_counter() - t0;
-    print(f"graph writes: {len(batch[0])} Word nodes in {t_write:.2f}s ({t_write/max(1,len(batch[0]))*1000:.1f}ms each)");
+    print(f"inline write: {len(batch[0])} words in {t_write*1000:.1f}ms");
 }

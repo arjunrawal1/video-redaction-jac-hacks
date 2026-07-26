@@ -141,8 +141,11 @@ walker Cascade {
         self.stopped_because = reason;
         self.agent.reason = reason;
         self.agent.still_visible = len(self.targets) > 0;
+        # `focus` moves with the agent, so the seed has to come from the field
+        # that does not: otherwise a finished agent reports launching from
+        # wherever it happened to stop.
         self.agent.summary = (
-            f"{self.agent.direction} from frame {self.agent.focus}: "
+            f"{self.agent.direction} from frame {self.agent.seed_index}: "
             f"{self.boxes_added} box(es) over {self.steps} step(s), stopped because {reason}"
         );
     }
@@ -156,8 +159,10 @@ walker SeedCascades {
     has agents: list[Agent] = [];
     has boxes_added: int = 0;
     has tracks: dict[str, Track] = {};
+    has video: Video | None = None;
 
     can start with Video entry {
+        self.video = here;
         visit [here ->:Contains:->[?:Frame, index == 1]];
     }
 
@@ -186,9 +191,15 @@ walker SeedCascades {
             agent = Agent(
                 agent_id=f"{name}-{at.index}",
                 direction=name,
+                seed_index=at.index,
                 focus=at.index
             );
             root ++> agent;
+            # An agent that places no boxes has no frames to be found through,
+            # so the video claims it directly.
+            if self.video is not None {
+                self.video +>:Ran:+> agent;
+            }
             self.agents.append(agent);
 
             run = Cascade(

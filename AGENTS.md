@@ -165,6 +165,10 @@ both `jac start` and `jac start --dev`.
 
 **An endpoint must be named in `main.jac`'s import** or it answers 405.
 
+**One request cannot delete nodes and then create more.** The new ones are
+silently discarded: the walker reports the right counts, the response is 200,
+nothing is logged, and the graph ends up empty. Delete in its own request.
+
 **`skip` does not suppress sibling JSX children.** `{if cond { ... skip; }}`
 followed by a sibling renders both. Use `if/else`.
 

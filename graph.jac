@@ -75,6 +75,7 @@ node Track {
 node Agent {
     has agent_id: str;
     has direction: str;            # forward | backward
+    has seed_index: int = 0;       # frame it launched from, fixed for life
     has focus: int = 0;            # frame index this agent is inspecting
     has summary: str = "";
     has still_visible: bool = True;
@@ -123,6 +124,8 @@ edge Detected : Frame --> Box {}
 edge MemberOf : Box --> Track {}       # identity of one redaction across frames
 edge AddedBy  : Box --> Agent {}       # provenance
 edge SpawnedBy: Agent --> Agent {}     # cascade lineage
+edge Ran      : Video --> Agent {}     # an agent belongs to its video even
+                                       # when it placed nothing
 edge Governs  : Policy --> PredNode {}
 edge Child    : PredNode --> PredNode {}
 edge AppliedTo: Policy --> Video {}

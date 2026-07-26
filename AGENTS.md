@@ -50,6 +50,17 @@ pipeline reasons about and traverses between: frames, boxes, tracks, agents,
 policy. Bulk data goes in a field. If you are about to create thousands of
 nodes, stop.
 
+**Persistence is scoped per entry file.** `jac run spike/foo.jac` reads and
+writes `.jac/data/foo.db`; a different entry file sees a different graph. Two
+spikes cannot observe each other's data, and the app under `jac start` uses
+the project-named database. Put a check and the thing it checks in the same
+entry file.
+
+**Walker traversal is queue-driven, so a shared depth counter is not tree
+depth.** It records the order nodes were reached, which looks plausible and is
+wrong. To report hierarchy, emit an explicit parent id per node (follow the
+parent edge backwards) and let the caller nest them.
+
 **Never move `graph.jac`.** Archetype identity includes the module path, so
 relocating it orphans every persisted node, with no error at compile or query
 time.

@@ -14,6 +14,9 @@ neighbouring frames is the cascade's job, and it is far cheaper than asking a
 model about every frame.
 """
 
+import asyncio;
+import os;
+import from concurrent.futures { ThreadPoolExecutor }
 import from difflib { SequenceMatcher }
 import from jaclang.byllm.lib { Image }
 import from ai { pick_sensitive, format_words }
@@ -26,6 +29,10 @@ glob FUZZY_THRESHOLD: float = 0.82;
 # the wrong thing is visible and embarrassing; the cascade gets a second look
 # at anything genuinely present.
 glob MIN_PICK_CONFIDENCE: float = 0.5;
+
+# Vertex stops giving more throughput past three or four requests in flight;
+# beyond that each one just takes longer. See spike/inflight_check.jac.
+glob MAX_INFLIGHT: int = int(os.getenv("REDACTION_MAX_INFLIGHT", "4"));
 
 """Loose text match tolerating the odd OCR error."""
 def soft_match(word: str, needle: str, fuzzy: bool) -> bool {
@@ -94,17 +101,73 @@ def semantic_scope(leaf: SemanticLeaf) -> str {
     return f"{leaf.category}: {leaf.description}";
 }
 
-"""Put one question to the model about one frame.
+"""One question, prepared off the graph and ready to send.
 
-Takes plain values rather than a Frame so it never reads the graph, which
-keeps it honest about being a pure call.
+Carries plain values only. Nothing that runs off this thread -- a coroutine or
+a `flow` -- may read a node, so every field is filled on the walker's own
+thread before the batch goes out.
 """
-def run_ask(frame_path: str, scope: str, listing: str, limit: int) -> list[int] {
-    picks = pick_sensitive(Image(frame_path), scope, listing);
+obj AskJob {
+    has frame_path: str;
+    has scope: str;
+    has listing: str;
+    has limit: int;
+}
+
+"""Ask about one frame, holding a place in the rate-limit queue while it runs."""
+async def ask_one(job: AskJob, gate: asyncio.Semaphore) -> list[int] {
+    async with gate {
+        picks = await pick_sensitive(Image(job.frame_path), job.scope, job.listing);
+    }
     return sorted({
         p.index for p in picks
-        if 0 <= p.index < limit and p.confidence >= MIN_PICK_CONFIDENCE
+        if 0 <= p.index < job.limit and p.confidence >= MIN_PICK_CONFIDENCE
     });
+}
+
+async def ask_all(jobs: list[AskJob], max_inflight: int) -> list[list[int]] {
+    gate = asyncio.Semaphore(max(1, max_inflight));
+    return list(await asyncio.gather(*[ask_one(job, gate) for job in jobs]));
+}
+
+"""Put a batch of questions to the model with all of them in flight at once.
+
+Answers come back in the order the jobs were given.
+
+The batch is gathered rather than fanned out with `flow` because `flow expr`
+compiles to a zero-argument lambda: nothing is captured, and every name in the
+expression is read again on the worker thread, after the launching loop has
+moved on. A `flow` launched from a loop therefore sends the *last* iteration's
+arguments for every call in the batch, silently, with valid-looking results.
+Building a coroutine binds its arguments there and then, so this cannot
+happen. See `spike/flow_capture_check.jac`.
+"""
+def run_asks(jobs: list[AskJob], max_inflight: int = 0) -> list[list[int]] {
+    if not jobs {
+        return [];
+    }
+    batch = ask_all(jobs, max_inflight or MAX_INFLIGHT);
+    in_loop = True;
+    try {
+        asyncio.get_running_loop();
+    } except RuntimeError {
+        in_loop = False;
+    }
+    if not in_loop {
+        return asyncio.run(batch);
+    }
+    # Called from inside an event loop already, e.g. a server endpoint. Give
+    # the batch its own loop on one worker rather than blocking the caller's.
+    with ThreadPoolExecutor(max_workers=1) as pool {
+        return pool.submit(asyncio.run, batch).result();
+    }
+}
+
+"""Put one question to the model about one frame."""
+def run_ask(frame_path: str, scope: str, listing: str, limit: int) -> list[int] {
+    return run_asks([
+        AskJob(frame_path=frame_path, scope=scope, listing=listing, limit=limit)
+    ])[0];
 }
 
 """A question one policy leaf needs answered about a frame."""
@@ -226,8 +289,7 @@ walker EvalPredicate {
     }
 }
 
-"""Evaluate one frame against a policy. Shaped as a function so a batch of
-frames can be launched together with `flow`."""
+"""Evaluate one frame against a policy."""
 def evaluate_frame(pol: Policy, fr: Frame) -> list[int] {
     return (EvalPredicate(frame=fr) spawn pol).result;
 }
@@ -264,21 +326,29 @@ walker SeedDetect {
     can detect with Video exit {
         asks = (CollectAsks() spawn self.policy).asks;
 
-        jobs = [(fr, a) for fr in self.seeds for a in asks];
-
-        # Read what the calls need while still here, then ask one at a time.
-        # Overlapping these calls returns the same answer for every frame in
-        # the batch -- measured, not assumed -- and the failure is silent, so
-        # this stays sequential until byLLM is safe to fan out. See AGENTS.md.
-        cached: dict[str, dict[str, list[int]]] = {};
-        for (fr, a) in jobs {
+        # Every graph read happens here, on this thread. What goes into the
+        # batch is nothing but strings and ints.
+        keys: list[tuple[str, str]] = [];
+        jobs: list[AskJob] = [];
+        for fr in self.seeds {
             listing = format_words([w.text for w in fr.words]);
-            found = run_ask(fr.jpeg_path, a.scope, listing, len(fr.words));
-            key = jid(fr);
-            if key not in cached {
-                cached[key] = {};
+            for a in asks {
+                keys.append((jid(fr), a.leaf_id));
+                jobs.append(AskJob(
+                    frame_path=fr.jpeg_path,
+                    scope=a.scope,
+                    listing=listing,
+                    limit=len(fr.words)
+                ));
             }
-            cached[key][a.leaf_id] = found;
+        }
+
+        cached: dict[str, dict[str, list[int]]] = {};
+        for ((frame_key, leaf_id), found) in zip(keys, run_asks(jobs)) {
+            if frame_key not in cached {
+                cached[frame_key] = {};
+            }
+            cached[frame_key][leaf_id] = found;
         }
         self.model_calls = len(jobs);
 

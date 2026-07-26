@@ -82,7 +82,10 @@ sem WordPick.index = "The number shown beside the word in the supplied list.";
 sem WordPick.reason = "Why this word matches the policy, in one short clause.";
 sem WordPick.confidence = "Between 0.0 and 1.0. Use below 0.5 when genuinely unsure.";
 
-def pick_sensitive(shot: Image, policy: str, words: str) -> list[WordPick] by llm();
+# Async so a whole seed pass can go out at once. Model calls are pure I/O and
+# byLLM routes `async def` through litellm's `acompletion`, so overlapping
+# them costs one event loop and no threads. See `run_asks` in `detect.sv.jac`.
+async def pick_sensitive(shot: Image, policy: str, words: str) -> list[WordPick] by llm();
 sem pick_sensitive = """Decide which of a frame's OCR words the policy requires redacting.
 
 The image shows what the user saw; the list gives the exact words OCR read

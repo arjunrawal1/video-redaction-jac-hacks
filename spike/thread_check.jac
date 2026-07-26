@@ -1,7 +1,11 @@
-"""Why do concurrent policy asks return the wrong frame's answer?
+"""Do concurrent policy asks still return each frame's own answer?
 
-Runs the same run_ask calls sequentially and concurrently over real frames and
-prints the raw indices each returned, so a mix-up is visible directly.
+Puts the same question about seven real seed frames to the model twice: one at
+a time, then all at once through `run_asks`. Prints the raw indices and the
+words behind them, so a mix-up is visible directly.
+
+Also sanity-checks the OCR the answers are built on, because `ocr.sv.jac`
+fans out with `flow` over a loop variable -- the shape that corrupts here.
 """
 
 import os;
@@ -9,9 +13,22 @@ import time;
 import from ingest { ingest_video }
 import from ocr { ReadText }
 import from ai { format_words }
-import from detect { run_ask }
+import from detect { AskJob, run_ask, run_asks }
 
 include graph;
+
+glob SCOPE: str = "spreadsheet-cell-contents: values the user typed into grid cells";
+glob SEEDS: list[int] = [1, 9, 17, 25, 33, 41, 49];
+
+# `report` is a walker statement in Jac, so a helper cannot be called that.
+def show(fr: Frame, got: list[int]) {
+    print(f"  frame {fr.index:2}: {got} -> {[fr.words[i].text for i in got]}");
+}
+
+def summarize(label: str, answers: list[list[int]], secs: float) {
+    distinct = len({str(a) for a in answers});
+    print(f"  {label}: {secs:.1f}s, {distinct} distinct of {len(answers)}");
+}
 
 with entry {
     src = os.getenv("DEMO_VIDEO", "");
@@ -19,40 +36,60 @@ with entry {
     ReadText() spawn vid;
     frames = [vid ->:Contains:->];
 
-    picked: list[Frame] = [];
-    for want in [1, 9, 17, 25] {
-        hit = [f for f in frames if f.index == want];
-        if hit { picked.append(hit[0]); }
+    by_index = {f.index: f for f in frames};
+    picked = [by_index[i] for i in SEEDS if i in by_index];
+
+    # ocr.sv.jac launches `flow detect_words(fr.jpeg_path) for fr in chunk`
+    # with a batch size of 8. If that fan-out is losing its arguments the same
+    # way, every frame in a chunk carries the last-of-chunk word list.
+    ordered = [by_index[k] for k in sorted(by_index.keys())];
+    matches = 0;
+    checked = 0;
+    for (i, fr) in enumerate(ordered) {
+        last = min(i - (i % 8) + 7, len(ordered) - 1);
+        if last != i {
+            checked += 1;
+            if [w.text for w in fr.words] == [w.text for w in ordered[last].words] {
+                matches += 1;
+            }
+        }
     }
+    print(f"OCR: {matches}/{checked} frames carry their chunk's last word list");
 
-    scope = "spreadsheet-cell-contents: values the user typed into grid cells";
-
-    print("sequential:");
-    t0 = time.perf_counter();
-    for fr in picked {
-        got = run_ask(
-            fr.jpeg_path, scope,
-            format_words([w.text for w in fr.words]), len(fr.words)
-        );
-        print(f"  frame {fr.index:2}: {got} -> {[fr.words[i].text for i in got]}");
-    }
-    print(f"  ({time.perf_counter() - t0:.1f}s)");
-
-    print("concurrent, node reads done up front:");
-    t0 = time.perf_counter();
-    # Every graph read happens here, on this thread. What crosses into the
-    # thread pool is nothing but strings and ints.
-    prepared = [
-        (fr.jpeg_path, format_words([w.text for w in fr.words]), len(fr.words))
+    # Every graph read happens here. The jobs carry plain values only.
+    jobs = [
+        AskJob(
+            frame_path=fr.jpeg_path,
+            scope=SCOPE,
+            listing=format_words([w.text for w in fr.words]),
+            limit=len(fr.words)
+        )
         for fr in picked
     ];
-    futures = [flow run_ask(p0, scope, p1, p2) for (p0, p1, p2) in prepared];
-    results = [wait fut for fut in futures];
-    for (fr, got) in zip(picked, results) {
-        print(f"  frame {fr.index:2}: {got} -> {[fr.words[i].text for i in got]}");
-    }
-    print(f"  ({time.perf_counter() - t0:.1f}s)");
+    print(f"{len(jobs)} seed frames, word counts {[j.limit for j in jobs]}");
 
-    distinct = len({str(r) for r in results});
-    print(f"distinct concurrent answers: {distinct} of {len(results)}");
+    print("");
+    print("sequential:");
+    t0 = time.perf_counter();
+    seq = [run_ask(j.frame_path, j.scope, j.listing, j.limit) for j in jobs];
+    seq_secs = time.perf_counter() - t0;
+    for (fr, got) in zip(picked, seq) {
+        show(fr, got);
+    }
+    summarize("sequential", seq, seq_secs);
+
+    print("");
+    print("batched, all in flight at once:");
+    t0 = time.perf_counter();
+    batch = run_asks(jobs);
+    bat_secs = time.perf_counter() - t0;
+    for (fr, got) in zip(picked, batch) {
+        show(fr, got);
+    }
+    summarize("batched", batch, bat_secs);
+
+    agree = len([1 for (a, b) in zip(seq, batch) if a == b]);
+    print("");
+    print(f"{agree} of {len(jobs)} batched answers match the sequential answer");
+    print(f"speedup {seq_secs / max(bat_secs, 0.001):.1f}x");
 }

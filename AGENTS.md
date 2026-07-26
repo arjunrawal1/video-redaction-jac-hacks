@@ -50,16 +50,43 @@ pipeline reasons about and traverses between: frames, boxes, tracks, agents,
 policy. Bulk data goes in a field. If you are about to create thousands of
 nodes, stop.
 
-**Do not run `by llm()` calls concurrently.** Fanning them out with `flow`
-returns the *same* answer for every call in the batch. Measured directly:
-seven frames run one at a time gave seven different correct answers; the same
-seven in batches of four gave one answer per batch, repeated. Nothing raises,
-the shapes are right, and the results are quietly wrong -- for this pipeline
-that means confidently redacting the wrong words. Textract calls under `flow`
-are fine (that is the 11x win in the OCR pass), so this is specific to byLLM.
-The boundary is not fully characterised: the same fan-out from a module-level
-`with entry` did return distinct answers. Until that is understood, model
-calls stay sequential.
+**`flow` does not capture its arguments.** `flow expr` compiles to
+`thread_run(lambda: expr)` -- a lambda taking nothing -- so every name in the
+expression is read again on the worker thread, after the launching loop has
+moved on. Launching from a loop sends the *last* iteration's arguments for
+every task in the batch. Nothing raises, the shapes are right, and the results
+are quietly wrong; here that means confidently redacting the wrong words.
+Copying into a fresh local inside the loop body does not help -- the body
+shares one binding too. Two forms are safe: unroll into one never-reassigned
+name per call, or launch through a helper so each launch gets its own frame:
+
+```jac
+def launch(x: str) -> object { return flow work(x); }
+futures = [launch(x) for x in xs];
+```
+
+The bug hides itself. The first fan-out in a process has to start a thread per
+task, which lets each worker read its arguments before the launcher moves on,
+so a cold-pool test passes and every later fan-out corrupts. That, not scope,
+is why the same code looked fine from a module-level `with entry` and broke
+inside a walker ability. `spike/flow_capture_check.jac` shows all of it with no
+network calls.
+
+This is not specific to byLLM. `ocr.sv.jac` still has the unsafe form, and it
+is losing data: on the demo video 37 of 38 non-chunk-end frames carry their
+chunk's last word list. Consecutive frames of a screen recording read almost
+the same, so the text looks plausible while the box coordinates belong to
+another frame.
+
+**Overlap model calls with `async`, not `flow`.** byLLM routes
+`async def f(...) -> T by llm();` through litellm's `acompletion`, and a
+coroutine binds its arguments when it is built, so `asyncio.gather` cannot
+lose them the way `flow` does. `run_asks` in `detect.sv.jac` is the pattern:
+read every node field on the calling thread, hand plain values to the batch,
+gather behind a semaphore. byLLM itself is thread-safe -- the same fan-out is
+correct under `flow` once each launch gets its own frame
+(`spike/async_llm_check.jac`). Against Vertex, throughput stops improving past
+three or four requests in flight (`spike/inflight_check.jac`).
 
 **Never touch the graph inside a `flow`.** Reading a node's fields from a
 worker thread can return another thread's data and raise `WriteConflict` on an
@@ -104,6 +131,11 @@ name and silently shadows. This project uses `medialib/`.
 
 ## Syntax notes that cost time
 
+- An edge query cannot go inside an f-string -- `f"{len([v ->:Contains:->])}"`
+  fails to parse, because `:->` collides with the format-spec `:`. Bind it to a
+  name first. `jac check` reports this as an internal crash
+  (`'Name' object has no attribute 'left'`) rather than a syntax error, so
+  bisect toward the f-string when you see that.
 - Filters are `[?:Type]` and `[?field == x]`, combined as `[?:Type, field == x]`.
   The old `` (`?Type) `` and `(?field == x)` forms are gone.
 - Docstrings go **before** a `def`, not inside the body.
@@ -114,8 +146,10 @@ name and silently shadows. This project uses `medialib/`.
   `[?:Video, video_hash == video_hash]` is a tautology. Name the parameter
   something else.
 - `flow expr()` / `wait f` overlaps blocking calls. Launch the whole batch,
-  then wait; a `wait` inside the launch loop serializes it. This is an 11x
-  speedup on Textract.
+  then wait; a `wait` inside the launch loop serializes it. Never launch one
+  straight from a loop variable -- see the capture note above.
+- `report` is a walker statement, so a `def report(...)` is unreachable: the
+  call parses as `report (args);` and prints a tuple instead.
 - A walker that never `visit`s should be a `def:pub` function instead.
 
 ## Web layer notes

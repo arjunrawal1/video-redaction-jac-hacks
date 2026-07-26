@@ -7,6 +7,10 @@ kind = "web-app"
 jac-version = "==0.34.7"
 
 [dependencies]
+boto3 = "~=1.43"
+Pillow = "~=12.3"
+imagehash = "~=4.3"
+google-auth = "~=2.56"
 [dependencies.npm]
 react = "^18.2.0"
 react-dom = "^18.2.0"

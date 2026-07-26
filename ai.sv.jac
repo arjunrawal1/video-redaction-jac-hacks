@@ -107,33 +107,37 @@ sem pick_sensitive.words = "The frame's OCR words, one per line as 'index: text'
 
 # ------------------------------------------------------------- cascade
 
-"""One cascade agent's verdict about the frame it just stepped onto."""
-obj TrackStep {
-    has still_present: bool;
+"""What a cascade agent found when it looked for one target on a frame."""
+obj TrackFinding {
+    has target: int;
+    has present: bool;
     has indices: list[int];
     has reason: str;
     has confidence: float;
 }
 
-sem TrackStep.still_present = "True if the tracked content is visible in this frame at all.";
-sem TrackStep.indices = "Indices of the OCR words covering it now. Empty when it is gone.";
-sem TrackStep.reason = "One short clause explaining the verdict.";
-sem TrackStep.confidence = "Between 0.0 and 1.0.";
+sem TrackFinding.target = "The number shown beside the target in the list you were given.";
+sem TrackFinding.present = "True only if this target is visible on this frame.";
+sem TrackFinding.indices = "Indices of the OCR words covering it now. Empty when it is gone.";
+sem TrackFinding.reason = "One short clause explaining the verdict.";
+sem TrackFinding.confidence = "Between 0.0 and 1.0.";
 
-def track_across_frame(shot: Image, target: str, why: str, words: str) -> TrackStep by llm();
-sem track_across_frame = """Follow one piece of sensitive content into an adjacent frame.
+def track_targets(shot: Image, targets: str, why: str, words: str) -> list[TrackFinding] by llm();
+sem track_targets = """Follow several pieces of sensitive content into the next frame.
 
-It was redacted in the neighbouring frame and you are checking whether it is
-still on screen here. It may have moved, scrolled, been partly covered, or be
-gone entirely.
+Each was redacted on a neighbouring frame and you are checking which of them
+are still on screen here. Content may have moved, scrolled, been covered, or
+left entirely, and each target is independent.
 
-Report it present only when you can actually see it, and give the OCR indices
-covering it now -- they may differ from last frame. If it has left the screen,
-say so plainly; a cascade that refuses to stop wastes work and over-redacts.""";
-sem track_across_frame.shot = "The frame now being examined.";
-sem track_across_frame.target = "The exact text being followed.";
-sem track_across_frame.why = "Why it was considered sensitive.";
-sem track_across_frame.words = "This frame's OCR words, one per line as 'index: text'.";
+Return exactly one finding per target and no more, each identified by the
+target's number. Give the OCR indices covering it now -- they will often differ
+from last frame. Mark a target present only when you can actually see it;
+saying something is gone is how the agent knows to stop, and refusing to stop
+both wastes work and redacts things that are no longer there.""";
+sem track_targets.shot = "The frame now being examined.";
+sem track_targets.targets = "The texts being followed, one per line as 'number: text'.";
+sem track_targets.why = "Why this content is considered sensitive.";
+sem track_targets.words = "This frame's OCR words, one per line as 'index: text'.";
 
 # ------------------------------------------------------------- helpers
 

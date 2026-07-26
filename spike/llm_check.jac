@@ -5,6 +5,7 @@ all work: `jac run spike/llm_check.jac`. Expects media/testframe.jpg to exist.
 """
 
 import os;
+import medialib;
 import from jaclang.byllm.lib { Model, Image }
 
 glob llm: Model = Model(

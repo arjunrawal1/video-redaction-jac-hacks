@@ -1964,3 +1964,194 @@ button {
         --casc-gutter: 104px;
     }
 }
+
+/* ---------------------------------------------------------- run panel
+   The progress log is the only place in the app where text arrives while
+   the user is watching, so stages are colour-coded and the newest line is
+   always the one at the bottom. */
+
+.run {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.run-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.run-title {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.run-badge {
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 999px;
+}
+
+.run-badge-live {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    animation: run-pulse 1.4s ease-in-out infinite;
+}
+
+.run-badge-ok {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+@keyframes run-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+.run-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.run-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+}
+
+.run-input,
+.run-stride {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 8px 10px;
+    resize: vertical;
+}
+
+.run-input:focus,
+.run-stride:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.run-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.run-stride {
+    width: 64px;
+    padding: 5px 8px;
+}
+
+.run-go {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.run-go:hover:not(:disabled) { background: var(--accent-strong); }
+.run-go:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.run-note {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--warning);
+    background: var(--warning-soft);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+}
+
+.run-log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.run-step {
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    animation: run-in 0.25s ease-out;
+}
+
+@keyframes run-in {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: none; }
+}
+
+.run-stage {
+    font-size: 0.62rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: right;
+}
+
+.run-msg { color: var(--text-secondary); }
+
+.run-step-policy .run-stage { color: var(--accent-strong); }
+.run-step-detect .run-stage { color: var(--overlay-redaction); }
+.run-step-cascade .run-stage,
+.run-step-agent .run-stage { color: var(--cascade-accent); }
+.run-step-export .run-stage { color: var(--success); }
+.run-step-done .run-msg { color: var(--success); }
+.run-step-error .run-stage,
+.run-step-error .run-msg { color: var(--danger); }
+
+.run-seeexport {
+    font-size: 0.78rem;
+    color: var(--accent-strong);
+    text-decoration: none;
+}
+
+.run-seeexport:hover { text-decoration: underline; }
+
+.run-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    background: var(--accent-soft);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+}
+
+.up-open {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent-strong);
+    text-decoration: none;
+}
+
+.up-open:hover { text-decoration: underline; }

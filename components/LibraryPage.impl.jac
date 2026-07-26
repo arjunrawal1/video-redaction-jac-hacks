@@ -20,6 +20,10 @@ impl LibraryPage.submitIngest -> None {
     if result is not None {
         ingest_accepted = result.accepted;
         ingest_message = result.message;
+        ingest_video_id = result.video_id;
+        if result.accepted {
+            videos = await list_videos();
+        }
     } else {
         ingest_accepted = False;
         ingest_message = "The server did not answer the ingest request.";

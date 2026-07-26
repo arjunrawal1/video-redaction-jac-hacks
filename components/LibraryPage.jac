@@ -19,7 +19,8 @@ def:pub LibraryPage -> JsxElement {
         pick: str = "",
         ingest_pending: bool = False,
         ingest_message: str = "",
-        ingest_accepted: bool = False;
+        ingest_accepted: bool = False,
+        ingest_video_id: str = "";
 
     async can with entry {
         loadLibrary();
@@ -82,7 +83,8 @@ def:pub LibraryPage -> JsxElement {
                     pending={ingest_pending}
                     outcome={ingest_message}
                     accepted={ingest_accepted}
-                    onPick={lambda (name: str) { pick = name; ingest_message = ""; }}
+                    open_to={f"/video/{ingest_video_id}" if ingest_video_id else ""}
+                    onPick={lambda (name: str) { pick = name; ingest_message = ""; ingest_video_id = ""; }}
                     onSubmit={submitIngest}
                 />
                 <div className="lib-note">

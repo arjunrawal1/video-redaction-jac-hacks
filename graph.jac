@@ -32,6 +32,11 @@ node Video {
     has duration: float = 0.0;
     has source_path: str = "";
     has export_path: str = "";
+    # What was asked for, and the progress frames the run emitted answering it.
+    # Kept so the run can be replayed at its own pace without paying the model
+    # a second time; the passes themselves are not re-run from this.
+    has run_request: str = "";
+    has run_log: list[str] = [];
 }
 
 """One word Textract found, in box_2d order on the 0..1000 scale."""

@@ -1,17 +1,20 @@
 """The upload affordance.
 
-The control is real and the answer comes from the server, but the answer today
-is a refusal: `request_ingest` has nothing behind it that turns a file into a
-Frame chain. Showing the server's own words is the honest version of "not yet
-connected" - when the endpoint starts accepting, this panel starts succeeding
-without a change here.
+A browser hands over a file's name, not its path, so the server looks for that
+name where recordings live rather than receiving bytes. A recording it already
+holds is returned as-is; one it cannot find is refused in its own words. Either
+way the answer shown here is the server's, so this panel needs no change when
+the search widens.
 """
+
+import from "@jac/runtime" { Link }
 
 def:pub UploadPanel(
     filename: str,
     pending: bool,
     outcome: str,
     accepted: bool,
+    open_to: str,
     onPick: Callable[[str], None],
     onSubmit: Callable[[], None]
 ) -> JsxElement {
@@ -36,12 +39,10 @@ def:pub UploadPanel(
     return <form className="up" onSubmit={handle_submit}>
         <div className="up-head">
             <h2 className="up-title">Add a recording</h2>
-            <span className="up-badge">pipeline not connected</span>
         </div>
         <p className="up-copy">
-            Ingest, OCR and export all run in the graph today, but nothing yet
-            carries an uploaded file into them. This control asks the server and
-            reports exactly what it says.
+            Pick a screen recording. It is decoded into a deduplicated frame
+            chain and read for text before you say what to cover.
         </p>
         <label className="up-drop">
             <input
@@ -57,10 +58,13 @@ def:pub UploadPanel(
             <span className="up-drop-hint">.mov / .mp4</span>
         </label>
         <button className="up-go" type="submit" disabled={pending or not filename}>
-            {"Asking the server..." if pending else "Send to pipeline"}
+            {"Reading the video..." if pending else "Ingest"}
         </button>
         {if outcome {
             <p className={"up-out up-out-" + ("ok" if accepted else "no")}>{outcome}</p>
+        }}
+        {if accepted and open_to {
+            <Link className="up-open" to={open_to}>Open it and choose what to redact</Link>
         }}
     </form>;
 }

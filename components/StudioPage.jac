@@ -13,6 +13,7 @@ import from .FrameInspector { FrameInspector }
 import from .FramePanel { FramePanel }
 import from .FrameStrip { FrameStrip }
 import from .MetaChip { MetaChip }
+import from .RunPanel { RunPanel }
 
 sv import from ..library { VideoDetail, FrameView, WordView, get_video, get_frame_words }
 
@@ -116,6 +117,7 @@ def:pub StudioPage -> JsxElement {
 
             <aside className="studio-rail">
                 <FramePanel frame={current} words={words} show_words={show_words}/>
+                <RunPanel video_id={video_id} box_count={video.box_count}/>
                 <ExportPanel export_url={video.export_url} box_count={video.box_count}/>
             </aside>
         </div>

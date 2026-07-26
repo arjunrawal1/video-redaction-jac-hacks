@@ -31,23 +31,69 @@ obj IngestOutcome {
         video_id: str;
 }
 
-"""Refuse an upload, in the words the UI should show.
+"""Take a chosen recording, ingesting it if this machine can find the file.
 
-Replace the body with the real ingest when the upload path exists; the client
-already renders whatever this returns.
+The browser hands over a name, not a path, so this looks for the file where
+screen recordings land and where the project keeps its own media. A recording
+already in the graph is handed straight back rather than decoded again -- the
+frames, the text and any finished run are all still there.
+
+When the file is nowhere this machine can reach, it says so instead of
+reporting a run that never happened.
 """
-def:pub request_ingest(filename: str) -> IngestOutcome {
+def:pub request_ingest(filename: str, fps: float = 4.0) -> IngestOutcome {
+    if not filename {
+        return IngestOutcome(accepted=False, message="No file chosen.", video_id="");
+    }
+
+    for v in [root -->[?:Video]] {
+        if v.title == filename or os.path.basename(v.source_path) == filename {
+            frames = [v ->:Contains:->[?:Frame]];
+            return IngestOutcome(
+                accepted=True,
+                message=(
+                    f"'{filename}' is already in the graph: {len(frames)} frames, "
+                    "text read. Ready to redact."
+                ),
+                video_id=jid(v)
+            );
+        }
+    }
+
+    for folder in SEARCH_DIRS {
+        candidate = os.path.join(os.path.expanduser(folder), filename);
+        if os.path.exists(candidate) {
+            vid = ingest_video(candidate, fps=fps);
+            run = ReadText() spawn vid;
+            frames = [vid ->:Contains:->[?:Frame]];
+            return IngestOutcome(
+                accepted=True,
+                message=(
+                    f"{len(frames)} frames kept, {run.words_added} words read "
+                    f"from '{filename}'. Ready to redact."
+                ),
+                video_id=jid(vid)
+            );
+        }
+    }
+
     return IngestOutcome(
         accepted=False,
         message=(
-            f"'{filename}' was not processed. Upload is not connected yet: the "
-            "ingest, OCR and export passes all run today, but nothing carries an "
-            "uploaded file into them, so this control refuses rather than report "
-            "a run that never happened."
+            f"'{filename}' is not somewhere this server can read. A browser "
+            "hands over the name but not the path, so the file has to be on "
+            "this machine, in the project's media folder or with the screen "
+            "recordings."
         ),
         video_id=""
     );
 }
+
+# Where a chosen file might actually live. The browser gives a bare name, so
+# the server looks rather than guesses.
+glob SEARCH_DIRS: list[str] = [
+    "media", "~/Documents", "~/Desktop", "~/Movies", "~/Downloads"
+];
 
 """Ingest a video already on the server's disk and OCR it. Dev seeding only."""
 def:pub seed_from_path(source_path: str, fps: float = 8.0) -> IngestOutcome {

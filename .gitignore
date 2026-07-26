@@ -1,0 +1,24 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*key.json
+credentials.json
+
+# Jac build + runtime state
+.jac/
+
+# Node
+node_modules/
+
+# Generated media
+media/
+frames/
+exports/
+*.mp4
+*.mov
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

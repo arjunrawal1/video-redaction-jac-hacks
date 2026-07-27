@@ -286,6 +286,27 @@ def:pub record_run(video_id: str, request: str, lines: list[str]) -> RunRecord {
     return RunRecord(present=len(lines) > 0, request=request, steps=len(lines));
 }
 
+"""Add up a video's redactions and words once, and keep the answer.
+
+Counting means an edge query per frame, so a page that shows the total pays
+for the whole video every time it loads. Doing it here lets every reader take
+the stored number.
+"""
+def:pub refresh_counts(video_id: str) -> RunRecord {
+    vid = video_by_id(video_id);
+    if vid is None {
+        return RunRecord(present=False, request="", steps=0);
+    }
+    frames = [vid ->:Contains:->[?:Frame]];
+    vid.box_total = sum([len([f ->:Detected:->[?:Box]]) for f in frames]);
+    vid.word_total = sum([len(f.words) for f in frames]);
+    return RunRecord(
+        present=True,
+        request=f"{vid.box_total} boxes, {vid.word_total} words",
+        steps=len(frames)
+    );
+}
+
 """Report whether a video already has a run the console can play back."""
 def:pub get_run_record(video_id: str) -> RunRecord {
     vid = video_by_id(video_id);

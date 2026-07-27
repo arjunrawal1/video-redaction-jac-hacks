@@ -258,6 +258,10 @@ def _frame_view(f: Frame) -> FrameView {
 }
 
 def _video_view(v: Video, frames: list[Frame]) -> VideoView {
+    boxes = v.box_total if v.box_total >= 0
+        else sum([len([f ->:Detected:->[?:Box]]) for f in frames]);
+    words = v.word_total if v.word_total >= 0
+        else sum([len(f.words) for f in frames]);
     return VideoView(
         id=jid(v),
         title=v.title,
@@ -271,8 +275,8 @@ def _video_view(v: Video, frames: list[Frame]) -> VideoView {
         export_url=media_url(v.export_path),
         frame_count=len(frames),
         ocr_frame_count=len([f for f in frames if f.ocr_done]),
-        box_count=sum([len([f ->:Detected:->[?:Box]]) for f in frames]),
-        word_count=sum([len(f.words) for f in frames])
+        box_count=boxes,
+        word_count=words
     );
 }
 
@@ -347,21 +351,41 @@ def _find_frame(frame_id: str) -> Frame | None {
 def:pub list_videos -> list[VideoView] {
     out: list[VideoView] = [];
     for v in [root -->[?:Video]] {
-        out.append(_video_view(v, _ordered_frames(v)));
+        # A card needs a count and a poster. The chain walk is the ordering
+        # authority the studio wants, and walking five hundred frames to draw
+        # one thumbnail is what made this page take twenty seconds.
+        frames = sorted(
+            [v ->:Contains:->[?:Frame]], key=lambda (f: Frame) { f.index; }
+        );
+        out.append(_video_view(v, frames));
     }
     return out;
 }
 
-"""One video with its frames in order and each frame's redaction boxes."""
-def:pub get_video(video_id: str) -> VideoDetail | None {
+"""One video with its frames in order and each frame's redaction boxes.
+
+Building a frame's view costs an edge query, so a video kept at its own frame
+rate would have the studio wait on five hundred of them before drawing
+anything. Past `most`, the timeline is thinned to an evenly spaced sample that
+still spans the whole video, keeping the first and last frame. Each frame
+carries its real index, so what is shown is a subset of the truth rather than
+a renumbering of it, and the header still reports the full count.
+"""
+def:pub get_video(video_id: str, most: int = 60) -> VideoDetail | None {
     v = _find_video(video_id);
     if v is None {
         return None;
     }
     frames = _ordered_frames(v);
+    shown = frames;
+    if most > 1 and len(frames) > most {
+        last = len(frames) - 1;
+        picks = sorted({(i * last) // (most - 1) for i in range(most)});
+        shown = [frames[i] for i in picks];
+    }
     return VideoDetail(
         video=_video_view(v, frames),
-        frames=[_frame_view(f) for f in frames]
+        frames=[_frame_view(f) for f in shown]
     );
 }
 

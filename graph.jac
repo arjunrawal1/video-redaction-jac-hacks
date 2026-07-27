@@ -37,6 +37,12 @@ node Video {
     # a second time; the passes themselves are not re-run from this.
     has run_request: str = "";
     has run_log: list[str] = [];
+    # Totals kept here because counting them means an edge query per frame,
+    # which is fine for fifty frames and takes twenty seconds for five hundred.
+    # Negative means never counted, so a video that predates this still adds up
+    # the slow way rather than reporting zero.
+    has box_total: int = -1;
+    has word_total: int = -1;
 }
 
 """One word Textract found, in box_2d order on the 0..1000 scale."""

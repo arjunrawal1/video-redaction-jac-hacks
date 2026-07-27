@@ -19,7 +19,8 @@ import from endpoints {
 # The two streams are read with a raw fetch to get the frames as they arrive,
 # so no generated stub mentions them and only this import registers the routes.
 import from pipeline {
-    RunRecord, run_pipeline, replay_pipeline, get_run_record, record_run
+    RunRecord, run_pipeline, replay_pipeline, get_run_record, record_run,
+    refresh_counts
 }
 
 cl {

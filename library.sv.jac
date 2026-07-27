@@ -195,15 +195,25 @@ obj VideoDetail {
 The runtime resolves a `/static/<path>` URL against `assets/<path>` and friends
 and has no hook for streaming an arbitrary disk path, so the link is what makes
 `/static/media/frames/<hash>/frame_000001.jpg` a real byte-for-byte JPEG
-response. Created here rather than committed so a fresh clone works.
+response. Created here rather than committed so a fresh clone works — a
+committed symlink to gitignored `media/` is dangling on clone and breaks
+JacHammer's deploy copytree.
 """
 def _publish_media_dir -> bool {
     link = os.path.join("assets", "media");
     try {
-        if os.path.islink(link) or os.path.exists(link) {
+        # Target must exist first; a dangling assets/media symlink makes
+        # shutil.copytree raise during JacHammer sandbox staging.
+        os.makedirs(MEDIA_ROOT, exist_ok=True);
+        os.makedirs("assets", exist_ok=True);
+        if os.path.islink(link) {
+            if os.path.exists(link) {
+                return True;
+            }
+            os.unlink(link);
+        } elif os.path.exists(link) {
             return True;
         }
-        os.makedirs("assets", exist_ok=True);
         os.symlink(os.path.join("..", MEDIA_ROOT), link);
         return True;
     } except OSError {

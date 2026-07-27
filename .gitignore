@@ -13,6 +13,8 @@ node_modules/
 
 # Generated media
 media/
+# Runtime symlink into media/ — must not be committed (dangling on fresh clone)
+assets/media
 frames/
 exports/
 *.mp4
@@ -22,3 +24,7 @@ exports/
 .vscode/
 .idea/
 .DS_Store
+
+# local-only manual box editor
+tools/boxfix/
+tools/demo/
